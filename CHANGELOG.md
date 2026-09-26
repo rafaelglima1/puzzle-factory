@@ -6,6 +6,25 @@ versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed — M3 session progress resume
+
+- `TrafficFirstPlayableSession` now owns progress initialization: its
+  constructor loads the persisted profile, so
+  `TrafficFirstPlayableSession.new()` + `play()` resumes at the highest
+  unlocked level without any caller touching `load_progress()` (blueprint M3
+  "progress survives app restart"). Missing or malformed saves fall back to a
+  clean level-1 profile without crashing; injecting a store only redefines the
+  persistence path.
+- Debug level selection is isolated from production progression: a
+  `debug_select_level()` win still emits `level_won` but never persists and
+  never unlocks anything (`is_debug_attempt()` reports it;
+  `restart_current_level()` keeps the flag). `next_level()` from a debug level
+  starts a normal, persisting attempt.
+- Tests: new `m3_session_resume_test.gd` (resume without a manual load, fresh
+  install, malformed save, debug isolation) and the session suite no longer
+  calls `load_progress()` itself, so the production initialization path is what
+  the suite exercises.
+
 ### Added — M3 First Playable (AGENT-1: session, levels, basic save)
 
 - `TrafficFirstPlayableSession` (`game/integration/traffic/`): play/start/

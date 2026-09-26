@@ -72,8 +72,9 @@ func _cleanup() -> void:
 
 
 func _make_session() -> Dictionary:
+	# The session owns progress loading (M3 resume requirement): the test only
+	# supplies the persistence path and never calls load_progress() itself.
 	var store := M3ProgressStore.new(TMP_PATH)
-	store.load_progress()
 	var session := TrafficFirstPlayableSession.new(store)
 	var presenter: Variant = Presenter.new()
 	presenter.build()
@@ -247,7 +248,9 @@ func _terminal_at_the_last_level() -> void:
 	check(not session.next_level(), "next_level at the final level returns false")
 	check_eq(recorder.finished, 1, "campaign_finished emitted once")
 	check_eq(session.current_level_index(), L10_INDEX, "session never indexes beyond the final level")
-	check_eq(session.highest_unlocked_level(), 10, "final level remains the highest unlock")
+	check_eq(recorder.won.size(), 1, "debug win still announces the win")
+	check(session.is_debug_attempt(), "the attempt is flagged as debug")
+	check_eq(session.highest_unlocked_level(), 1, "debug attempts never write production progression")
 	_dispose(context)
 
 

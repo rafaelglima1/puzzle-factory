@@ -27,6 +27,18 @@ extends RefCounted
 ## Router lifecycle: the session owns exactly one adapter/router pair for its
 ## lifetime; `unbind_presentation()` clears the router subscribers so the
 ## RefCounted wiring cycle is released.
+##
+## Persistence ownership (M3 resume requirement): the session OWNS progress
+## initialization. Its constructor always calls `load_progress()` on the store
+## it holds, so `TrafficFirstPlayableSession.new()` recovers the persisted
+## profile and `play()` resumes at the highest unlocked level. Callers (AGENT-2
+## UI) never call `load_progress()`; injecting a store only redefines the
+## persistence path (tests/QA).
+##
+## Debug isolation: levels started through [method debug_select_level] still
+## emit [signal level_won] but never write production progression (see
+## [method is_debug_attempt]). `next_level()` from a debug level starts a normal
+## attempt.
 
 signal level_started(level_index: int, level_id: StringName)
 signal level_restarted(level_index: int, level_id: StringName)
@@ -48,10 +60,19 @@ var _simulation: Simulation = null
 var _presenter: Variant = null
 var _level_index: int = -1
 var _terminal_emitted := false
+## True while the current attempt was started through [method debug_select_level]:
+## debug attempts never write production progression.
+var _debug_attempt := false
 
 
+## The session OWNS progress initialization: it always recovers the persisted
+## M3 profile for the store it holds (injected or created), so callers never
+## have to call `load_progress()` themselves — `TrafficFirstPlayableSession.new()`
+## is enough for the app-restart resume requirement. An injected store only
+## redefines the persistence PATH (tests, QA).
 func _init(progress: M3ProgressStore = null) -> void:
 	_progress = progress if progress != null else M3ProgressStore.new()
+	_progress.load_progress()
 	_adapter = TrafficPresentationAdapter.new()
 
 
@@ -124,27 +145,37 @@ func start_level(level_index: int) -> bool:
 	if not is_level_unlocked(level_index):
 		session_error.emit(ERROR_INVALID_LEVEL_INDEX)
 		return false
-	return _begin_level(level_index, false)
+	return _begin_level(level_index, false, false)
 
 
 ## DEBUG/DEVELOPER ONLY (blueprint M3 debug level select): starts any level
 ## regardless of unlock state. Production progression UI must use
 ## [method start_level] / [method play].
+##
+## Debug attempts are intentionally isolated from production progression: a
+## debug-selected level still emits [signal level_won], but its win is never
+## persisted and never unlocks anything. See [method is_debug_attempt].
 func debug_select_level(level_index: int) -> bool:
 	if level_index < 0 or level_index >= total_levels():
 		session_error.emit(ERROR_INVALID_LEVEL_INDEX)
 		return false
-	return _begin_level(level_index, false)
+	return _begin_level(level_index, false, true)
+
+
+## True while the active attempt came from [method debug_select_level].
+## The M3 shell may use it to show a debug badge; it is not progression state.
+func is_debug_attempt() -> bool:
+	return _debug_attempt
 
 
 ## Rebuilds the current level from its original deterministic definition:
 ## move count, entities, queues, staging and completion reset. Progress and
-## unlocks are untouched.
+## unlocks are untouched (a debug attempt stays a debug attempt).
 func restart_current_level() -> bool:
 	if not has_active_level():
 		session_error.emit(ERROR_NO_ACTIVE_LEVEL)
 		return false
-	return _begin_level(_level_index, true)
+	return _begin_level(_level_index, true, _debug_attempt)
 
 
 ## Only valid after a legitimate win. Starts the next level when one exists;
@@ -162,7 +193,8 @@ func next_level() -> bool:
 	if next_index >= total_levels():
 		campaign_finished.emit()
 		return false
-	return _begin_level(next_index, false)
+	# Advancing explicitly from a debug level starts a normal attempt.
+	return _begin_level(next_index, false, false)
 
 
 ## The player's gameplay action. Returns null when no level is active.
@@ -224,11 +256,12 @@ func dispose() -> void:
 	_simulation = null
 	_level_index = -1
 	_terminal_emitted = false
+	_debug_attempt = false
 
 
 # --- internals -----------------------------------------------------------------
 
-func _begin_level(level_index: int, is_restart: bool) -> bool:
+func _begin_level(level_index: int, is_restart: bool, is_debug: bool) -> bool:
 	var definition := M3LevelCatalogue.definition(level_index)
 	if definition.is_empty():
 		session_error.emit(ERROR_INVALID_LEVEL_INDEX)
@@ -241,6 +274,7 @@ func _begin_level(level_index: int, is_restart: bool) -> bool:
 	_simulation = simulation
 	_level_index = level_index
 	_terminal_emitted = false
+	_debug_attempt = is_debug
 
 	_progress.set_last_selected_level(level_index + 1, total_levels())
 	if _presenter != null:
@@ -306,9 +340,12 @@ func _evaluate_terminal() -> void:
 		return
 	if state.is_won():
 		_terminal_emitted = true
-		_progress.mark_level_completed(current_level_id(), current_level_number(), total_levels())
-		_progress.save()
-		progress_changed.emit(highest_unlocked_level())
+		# Debug attempts are isolated from production progression: the win is
+		# announced but never persisted and never unlocks anything.
+		if not _debug_attempt:
+			_progress.mark_level_completed(current_level_id(), current_level_number(), total_levels())
+			_progress.save()
+			progress_changed.emit(highest_unlocked_level())
 		level_won.emit(_level_index, current_level_id())
 		return
 	if state.is_lost():

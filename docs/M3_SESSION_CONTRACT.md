@@ -20,9 +20,26 @@
 | restart requested | `restart_current_level() -> bool` |
 | next requested (after a win) | `next_level() -> bool` |
 | menu requested | shell-owned: leave gameplay via `unbind_presentation()` / `dispose()` |
-| debug level selected | `debug_select_level(level_index: int) -> bool` (DEBUG/DEV ONLY; bypasses unlock) |
+| debug level selected | `debug_select_level(level_index: int) -> bool` (DEBUG/DEV ONLY; bypasses unlock and never writes progression) |
 
 `start_level(level_index)` respects the unlock rule and is the production path.
+
+**Progression resume is session-owned.** `TrafficFirstPlayableSession.new()`
+loads the persisted M3 profile itself, so the shell must NOT call
+`load_progress()` (and must not know about the save file at all):
+
+```gdscript
+var session := TrafficFirstPlayableSession.new()   # recovers persisted progress
+session.play()                                      # fresh install -> level 1; returning -> highest unlocked
+```
+
+Injecting a store (`new(M3ProgressStore.new(path))`) only redefines the
+persistence path (tests/QA); the session still performs the load.
+
+**Debug isolation:** a level started through `debug_select_level()` still emits
+`level_won`, but its win is never persisted and never unlocks anything
+(`is_debug_attempt()` reports it). `restart_current_level()` keeps the debug
+flag; `next_level()` from a debug level starts a normal (persisting) attempt.
 
 ## 2. Signals (stable, documented)
 
