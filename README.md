@@ -10,13 +10,16 @@ explicitly overrides a section).
 
 ## Status
 
-**Milestone M0 — Foundation** (see blueprint §83):
+**Milestone M1 — Puzzle Core** (blueprint §83):
 
-- Godot 4.7.2-stable project under `game/` (portrait, mobile renderer)
-- Headless validation + automated test runner
-- Android Debug export (Gradle, minSdk 24 / targetSdk 36 verified)
-- CI foundation, documentation skeletons, initial ADRs
-- **No gameplay yet** — M1 (Puzzle Core) is next
+- **M0 (done):** Godot 4.7.2 project under `game/` (portrait, mobile
+  renderer), headless validation + test runner, Android Debug export
+  (Gradle, minSdk 24 / targetSdk 36 verified), CI foundation, docs, ADRs.
+- **M1 (done):** deterministic theme-independent core — board/occupancy,
+  entity model, seeded RNG, `GameState` + canonical serialization, command
+  system with domain events, presentation bridge contract, theme base
+  contract. 446 automated checks.
+- **No gameplay yet** — M2 (Traffic Gameplay) is next.
 
 ## Repository layout
 
@@ -67,7 +70,8 @@ No direct feature development on `main` (blueprint §77).
 | Document | Purpose |
 |---|---|
 | `docs/MASTER_BLUEPRINT.md` | Authoritative specification |
-| `docs/ARCHITECTURE.md` | Layers, boundaries, environments |
+| `docs/ARCHITECTURE.md` | Layers, deterministic core, boundaries, environments |
+| `docs/PRESENTATION_BRIDGE.md` | Domain event contract for presentation |
 | `docs/GAME_RULES.md` | v1 rules (scope/status) |
 | `docs/ANDROID.md` | Android toolchain, export, verification |
 | `docs/AGENT_RULES.md` | Agent working agreement |

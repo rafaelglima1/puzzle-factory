@@ -1,7 +1,10 @@
 # Game Rules
 
-> **Status:** Scope defined, **not yet implemented** (gameplay starts at
-> M1/M2). This is a summary for orientation; the authoritative text is
+> **Status:** Rules defined, **not yet implemented**. M1 (Puzzle Core)
+> provides only the generic deterministic foundations (board/occupancy,
+> entity model, commands, state, seeded RNG). Gameplay behaviour starts at
+> M2; booster/economy rules at M11.
+> This is a summary for orientation; the authoritative text is
 > `docs/MASTER_BLUEPRINT.md` §13–§17, §34–§35. Do not treat this file as
 > a second source of truth.
 
@@ -47,7 +50,7 @@ Every shipped production level must be solver-validated as
 
 | Rule area | Milestone |
 |---|---|
-| Board, entities, occupancy, commands, state, RNG | M1 |
+| Board, entities, occupancy, commands, state, RNG (generic only) | M1 (done) |
 | Traffic theme behavior, matching, staging, win/lose | M2 |
 | Boosters | M11 |
 | Full level/objective catalog (MOVE_LIMIT, TIME_LIMIT, ...) | M5+ |
