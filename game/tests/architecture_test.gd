@@ -45,6 +45,8 @@ func run() -> void:
 	_no_theme_terminology()
 	_no_presentation_references()
 	_no_scene_tree_usage()
+	_generic_layers_ignore_integration()
+	_integration_layer_is_product_specific()
 
 
 func _collect_scripts() -> void:
@@ -59,6 +61,39 @@ func _collect_scripts_at(path: String) -> void:
 			_files.append(path.path_join(file))
 	for directory in DirAccess.get_directories_at(path):
 		_collect_scripts_at(path.path_join(directory))
+
+
+## Dependency direction: generic layers must not reach into the product
+## integration layer (ADR-013). Integration may import both sides.
+func _generic_layers_ignore_integration() -> void:
+	var violations: Array[String] = []
+	for file in _files:
+		var text := FileAccess.get_file_as_string(file)
+		if text.contains("res://integration") or text.contains("integration/traffic"):
+			violations.append(file)
+	check(violations.is_empty(), "generic layers do not depend on the product integration layer (%s)" % ", ".join(violations))
+
+
+## The integration layer is where product vocabulary is allowed to live.
+func _integration_layer_is_product_specific() -> void:
+	var scripts := _collect_gd("res://integration/traffic")
+	check(scripts.size() >= 2, "product integration layer exists (%d scripts)" % scripts.size())
+	var mentions_product_terms := false
+	for path: String in scripts:
+		var text := FileAccess.get_file_as_string(path)
+		if text.contains("vehicle") or text.contains("passenger") or text.contains("station"):
+			mentions_product_terms = true
+	check(mentions_product_terms, "product integration layer owns the product vocabulary")
+
+
+func _collect_gd(path: String) -> Array[String]:
+	var scripts: Array[String] = []
+	for file in DirAccess.get_files_at(path):
+		if file.ends_with(".gd"):
+			scripts.append(path.path_join(file))
+	for directory in DirAccess.get_directories_at(path):
+		scripts.append_array(_collect_gd(path.path_join(directory)))
+	return scripts
 
 
 func _no_theme_terminology() -> void:

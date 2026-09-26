@@ -50,16 +50,23 @@ Agents work on their assigned branch; no direct development on `main`.
 | Path | Owner |
 |---|---|
 | `game/core/**`, `game/puzzle/**`, `game/levels/**`, `game/solver/**`, `game/generator/**`, `game/persistence/**` | AGENT-1 |
+| `game/integration/traffic/**` (product composition + presentation adapter) | AGENT-1 |
 | `game/themes/base/**` (generic contracts) | AGENT-1 |
 | `game/themes/traffic/**` (concrete theme) | AGENT-2 |
 | `game/ui/**`, `game/audio/**`, `game/haptics/**`, presentation/animations/particles | AGENT-2 |
 | `tests/**` core suites | AGENT-1 |
 
+Dependency direction (ADR-013): generic layers (`game/core`, `game/puzzle`,
+`game/themes/base`) must not know product vocabulary or reference
+`res://integration/**`; presentation must not import `game/core/**` or
+`game/puzzle/**`; the integration layer is the only place allowed to know both
+sides. Automated guards:
+`game/tests/architecture_test.gd` and
+`game/tests/presentation_boundary_test.gd` (AGENT-2, never weaken it).
+
 Cross-boundary changes require coordination (event contracts, state/save
 schema keys, shared abstractions). Disagreements are resolved with an ADR,
-never by silent divergence. `game/tests/architecture_test.gd` automatically
-enforces that generic layers stay free of theme vocabulary, presentation
-asset references and scene-tree usage.
+never by silent divergence.
 
 ## Design reference (recorded decision, 2026-09-26)
 

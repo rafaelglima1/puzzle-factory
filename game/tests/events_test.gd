@@ -115,9 +115,9 @@ func _contract_coverage() -> void:
 		if not PresentationContract.validate_event(event).is_empty():
 			all_valid = false
 	check(all_valid, "every emitted event validates against PresentationContract")
-	check_eq(emitted_types.size(), PresentationContract.known_event_types().size(), "M1 exercises the whole M1 event vocabulary")
-	check_eq(PresentationContract.CONTRACT_VERSION, 1, "contract version pinned at 1")
-	check_eq(PresentationContract.known_event_types().size(), 5, "M1 vocabulary has five event types")
+	check_eq(emitted_types.size(), 5, "M1 session exercises the five M1 event types")
+	check_eq(PresentationContract.CONTRACT_VERSION, 1, "contract version pinned at 1 (M2 is additive)")
+	check_eq(PresentationContract.known_event_types().size(), 12, "catalog holds the M1 + M2 event types")
 	check(PresentationContract.is_known_event(DomainEvent.ENTITY_PLACED), "placed is a known event")
 	check(not PresentationContract.is_known_event(&"not_a_real_event"), "unknown event type rejected")
 

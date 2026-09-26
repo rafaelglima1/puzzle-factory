@@ -23,11 +23,33 @@ because GDScript can only load `res://` paths:
 game/tests/
 ├── run_tests.gd            # headless runner (discovers *_test.gd)
 ├── framework/test_base.gd  # minimal assertion base class
-├── fixtures/               # test-only fixtures (deterministic sample generator)
+├── fixtures/               # test-only fixtures (shared core fixture)
 ├── bootstrap_test.gd       # project bootstrap validation
 ├── determinism_test.gd     # seeded reproducibility + golden vector
-└── framework_self_test.gd  # test framework self-test
+├── framework_self_test.gd  # test framework self-test
+├── board_test.gd           # M1 board/positions/footprints/bounds
+├── occupancy_test.gd       # M1 occupancy/blockers/atomic movement
+├── entity_test.gd          # M1 entity model + states
+├── rng_test.gd             # M1 deterministic RNG
+├── game_state_test.gd      # M1/M2 state, serialization, validation, migration
+├── command_test.gd         # M1 command system + atomicity
+├── events_test.gd          # M1 domain events + ordering + contract fit
+├── presentation_bridge_test.gd  # M1 event queue + contract surface
+├── architecture_test.gd    # architecture guards (generic layers)
+├── item_test.gd            # M2 generic item
+├── queue_test.gd           # M2 FIFO queue
+├── destination_test.gd     # M2 destination capacity/acceptance
+├── staging_test.gd         # M2 staging area (arbitrary capacity)
+├── matching_test.gd        # M2 matching contract + color-key rule
+├── path_test.gd            # M2 logical path validation/blockers
+├── objective_test.gd       # M2 objectives (CLEAR_ALL)
+├── traffic_gameplay_test.gd    # M2 Traffic rules end to end
+└── traffic_integration_test.gd # M2 event map + presentation adapter
 ```
+
+Presentation suites are owned by AGENT-2
+(`presentation_boundary_test.gd`, `traffic_layout_test.gd`,
+`traffic_presentation_test.gd`).
 
 The repository-root categories from the blueprint hold runner entry points
 and future non-Godot suites:

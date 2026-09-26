@@ -6,6 +6,40 @@ versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — M2 Traffic Gameplay (simulation)
+
+- Generic puzzle mechanics under `game/core/`:
+  - `entities/item.gd`, `entities/destination.gd` (accepted color keys,
+    capacity, processed counter, state)
+  - `state/item_queue.gd` (deterministic FIFO, serializable),
+    `state/staging_area.gd` (arbitrary slot count, lowest-free-slot,
+    overflow refusal)
+  - `matching/` contract + `ColorKeyMatchingRule`
+  - `movement/logical_path.gd` (validated deterministic waypoint list)
+  - `objectives/` (`Objective`, `ClearAllObjective`, `ObjectiveFactory`),
+    `rules/fail_reason.gd` (`staging_full`, `no_valid_moves`)
+- Gameplay pipeline in `game/puzzle/gameplay/`: `ArrivalResolver`
+  (strict FIFO loading bounded by entity/destination capacity, complete vs
+  stage) and `ProgressEvaluator` (objectives, win, `no_valid_moves`).
+- `DispatchEntityCommand` — the product player action (move along a validated
+  logical path, resolve arrival, evaluate progress) with stable rejection codes
+  and atomic rejections.
+- `GameState` schema **v2**: items, queues, destinations, paths, staging,
+  objectives, objectives_completed, fail_reason; deterministic v1 → v2
+  migration with compatibility tests.
+- Seven additive domain events: `item_loaded`, `match_occurred`,
+  `entity_completed`, `staging_changed`, `objective_completed`,
+  `game_completed`, `game_failed`; `entity_moved` gained an additive `path`
+  field. `PresentationContract` stays version 1 (additive change).
+- Product integration layer (`game/integration/traffic/`, ADR-013):
+  `TrafficGameFactory` (level composition/validation),
+  `TrafficEventMap` (event/presentation mapping + pressure),
+  `TrafficPresentationAdapter` (router forwarding + AGENT-2 view DTO
+  projection, read-only).
+- Tests: item, queue, destination, staging, matching, path, objective,
+  traffic gameplay, traffic integration; extended architecture guards,
+  GameState migration/validation and event catalog coverage (1157 checks).
+
 ### Added — M1 Puzzle Core
 
 - Deterministic, theme-independent core under `game/core/`:

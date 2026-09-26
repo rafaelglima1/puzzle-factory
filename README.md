@@ -10,7 +10,7 @@ explicitly overrides a section).
 
 ## Status
 
-**Milestone M1 — Puzzle Core** (blueprint §83):
+**Milestone M2 — Traffic Gameplay (simulation)** (blueprint §83):
 
 - **M0 (done):** Godot 4.7.2 project under `game/` (portrait, mobile
   renderer), headless validation + test runner, Android Debug export
@@ -18,8 +18,17 @@ explicitly overrides a section).
 - **M1 (done):** deterministic theme-independent core — board/occupancy,
   entity model, seeded RNG, `GameState` + canonical serialization, command
   system with domain events, presentation bridge contract, theme base
-  contract. 446 automated checks.
-- **No gameplay yet** — M2 (Traffic Gameplay) is next.
+  contract.
+- **M2 (done, simulation):** generic items/queues/destinations/staging,
+  color-key matching, capacity loading, logical paths, `CLEAR_ALL`
+  objectives, win/lose (`STAGING_FULL`, `NO_VALID_MOVES`), additive M2 domain
+  events and the Traffic product integration layer (factory + event map +
+  presentation adapter) — ADR-013. AGENT-2 owns the presentation side.
+- **Next:** M3 (First Playable: play flow, screens, save basics).
+
+```powershell
+powershell -File scripts/run_tests.ps1   # 24 suites, 1157 checks
+```
 
 ## Repository layout
 

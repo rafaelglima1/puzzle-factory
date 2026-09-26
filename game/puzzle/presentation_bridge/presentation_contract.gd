@@ -13,14 +13,19 @@ extends RefCounted
 ##   additively in later milestones (consumers must ignore unknown keys).
 ## - Emission order inside a [CommandResult] is deterministic and meaningful.
 ##
-## Version history:
+## Version history (additive changes keep the version; see docs/PRESENTATION_BRIDGE.md §7):
 ## - 1 (M1): entity_placed, entity_move_started, entity_moved, entity_blocked,
 ##   command_rejected.
+## - 1 + M2 (no breaking change): entity_completed, item_loaded,
+##   match_occurred, staging_changed, objective_completed, game_completed,
+##   game_failed; entity_moved gained an additive `path` field.
 
 const CONTRACT_VERSION := 1
 
 const SHAPE_STRING := "string"
+const SHAPE_INT := "int"
 const SHAPE_POSITION := "position"
+const SHAPE_POSITION_ARRAY := "position_array"
 const SHAPE_SIZE := "size"
 const SHAPE_STRING_ARRAY := "string_array"
 
@@ -39,6 +44,7 @@ const EVENTS := {
 		"entity_id": SHAPE_STRING,
 		"from": SHAPE_POSITION,
 		"to": SHAPE_POSITION,
+		"path": SHAPE_POSITION_ARRAY,
 	},
 	DomainEvent.ENTITY_BLOCKED: {
 		"entity_id": SHAPE_STRING,
@@ -49,6 +55,42 @@ const EVENTS := {
 		"status": SHAPE_STRING,
 		"code": SHAPE_STRING,
 		"entity_id": SHAPE_STRING,
+	},
+	DomainEvent.ENTITY_COMPLETED: {
+		"entity_id": SHAPE_STRING,
+		"destination_id": SHAPE_STRING,
+	},
+	DomainEvent.ITEM_LOADED: {
+		"entity_id": SHAPE_STRING,
+		"item_id": SHAPE_STRING,
+		"color_key": SHAPE_STRING,
+		"destination_id": SHAPE_STRING,
+		"loaded_count": SHAPE_INT,
+	},
+	DomainEvent.MATCH_OCCURRED: {
+		"entity_id": SHAPE_STRING,
+		"color_key": SHAPE_STRING,
+		"loaded_count": SHAPE_INT,
+	},
+	DomainEvent.STAGING_CHANGED: {
+		"action": SHAPE_STRING,
+		"entity_id": SHAPE_STRING,
+		"slot_index": SHAPE_INT,
+		"slot_count": SHAPE_INT,
+		"occupied_count": SHAPE_INT,
+		"available_slots": SHAPE_INT,
+	},
+	DomainEvent.OBJECTIVE_COMPLETED: {
+		"objective_id": SHAPE_STRING,
+		"objective_type": SHAPE_STRING,
+	},
+	DomainEvent.GAME_COMPLETED: {
+		"level_id": SHAPE_STRING,
+		"move_count": SHAPE_INT,
+	},
+	DomainEvent.GAME_FAILED: {
+		"fail_reason": SHAPE_STRING,
+		"move_count": SHAPE_INT,
 	},
 }
 
@@ -92,6 +134,8 @@ static func _matches_shape(shape: String, value: Variant) -> bool:
 	match shape:
 		SHAPE_STRING:
 			return typeof(value) == TYPE_STRING
+		SHAPE_INT:
+			return typeof(value) == TYPE_INT
 		SHAPE_STRING_ARRAY:
 			if typeof(value) != TYPE_ARRAY:
 				return false
@@ -99,8 +143,19 @@ static func _matches_shape(shape: String, value: Variant) -> bool:
 				if typeof(item) != TYPE_STRING:
 					return false
 			return true
+		SHAPE_POSITION_ARRAY:
+			if typeof(value) != TYPE_ARRAY:
+				return false
+			for item in value:
+				if not _is_position(item):
+					return false
+			return true
 		SHAPE_POSITION:
-			return typeof(value) == TYPE_DICTIONARY and typeof(value.get("x")) == TYPE_INT and typeof(value.get("y")) == TYPE_INT
+			return _is_position(value)
 		SHAPE_SIZE:
 			return typeof(value) == TYPE_DICTIONARY and typeof(value.get("width")) == TYPE_INT and typeof(value.get("height")) == TYPE_INT
 	return false
+
+
+static func _is_position(value: Variant) -> bool:
+	return typeof(value) == TYPE_DICTIONARY and typeof(value.get("x")) == TYPE_INT and typeof(value.get("y")) == TYPE_INT

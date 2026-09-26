@@ -145,6 +145,9 @@ func remove_entity(entity: Entity) -> bool:
 	if current == null:
 		return false
 	_clear_placement(entity.id, current["footprint"], current["position"])
+	# Invariant: position != null means "on the board". Removing an entity
+	# (e.g. it completed or was staged) clears its logical position.
+	entity.position = null
 	return true
 
 

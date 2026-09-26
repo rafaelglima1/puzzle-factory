@@ -40,6 +40,12 @@ static func success(p_events: Array[DomainEvent] = []) -> CommandResult:
 	return CommandResult.new(Status.SUCCESS, &"", p_events)
 
 
+## Successful command that also reports a machine-readable outcome code
+## (e.g. "staging_full", where the action was legal but the level is lost).
+static func success_with_code(p_code: StringName, p_events: Array[DomainEvent] = []) -> CommandResult:
+	return CommandResult.new(Status.SUCCESS, p_code, p_events)
+
+
 static func rejected(p_status: int, p_code: StringName, p_events: Array[DomainEvent] = []) -> CommandResult:
 	return CommandResult.new(p_status, p_code, p_events)
 

@@ -76,8 +76,8 @@ func _consuming_events_never_mutates_state() -> void:
 
 
 func _contract_surface() -> void:
-	check_eq(PresentationContract.CONTRACT_VERSION, 1, "contract version pinned")
-	check_eq(PresentationContract.known_event_types().size(), 5, "M1 event vocabulary size")
+	check_eq(PresentationContract.CONTRACT_VERSION, 1, "contract version pinned (M2 additive)")
+	check_eq(PresentationContract.known_event_types().size(), 12, "event vocabulary size (M1 + M2)")
 	var schemas_present := true
 	for event_type in PresentationContract.known_event_types():
 		if PresentationContract.payload_schema(event_type).is_empty():
