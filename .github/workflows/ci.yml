@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop, 'agent/**']
+  pull_request:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+env:
+  GODOT_VERSION: 4.7.2-stable
+  GODOT_ZIP_URL: https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip
+  GODOT_PATH: /home/runner/godot-bin/godot
+
+jobs:
+  validate:
+    name: Headless validation + tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache Godot binary
+        id: cache-godot
+        uses: actions/cache@v4
+        with:
+          path: ~/godot-bin
+          key: godot-4.7.2-stable-linux-x86_64
+
+      - name: Install Godot 4.7.2-stable
+        if: steps.cache-godot.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "$HOME/godot-bin"
+          curl -fsSL -o /tmp/godot.zip "$GODOT_ZIP_URL"
+          unzip -q /tmp/godot.zip -d /tmp/godot-unpack
+          mv /tmp/godot-unpack/Godot_v4.7.2-stable_linux.x86_64 "$HOME/godot-bin/godot"
+          chmod +x "$HOME/godot-bin/godot"
+
+      - name: Verify Godot version
+        run: '"$GODOT_PATH" --version'
+
+      - name: Import project (headless validation)
+        run: pwsh -File scripts/import_project.ps1
+
+      - name: Run automated tests
+        run: pwsh -File scripts/run_tests.ps1
+
+  # Android export CI is intentionally deferred (documented in ci/README.md):
+  # it requires Android SDK + JDK 17 + Gradle dependency downloads on the
+  # runner, which is deferred until the toolchain is stabilized for CI.

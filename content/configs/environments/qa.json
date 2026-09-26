@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "environment": "qa",
+  "description": "Release-like validation build. Test/staging services, analytics marked as QA, debug menu disabled. Service modes activate in M12-M14; no production credentials.",
+  "debugMenu": false,
+  "verboseLogging": false,
+  "adMode": "test",
+  "analyticsMode": "qa",
+  "remoteConfigMode": "qa",
+  "signing": "debug",
+  "credentialsPresent": false
+}

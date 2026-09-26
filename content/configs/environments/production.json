@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "environment": "production",
+  "description": "Production build contract. Real credentials are injected during M12-M16 and MUST NEVER be committed to this repository.",
+  "debugMenu": false,
+  "verboseLogging": false,
+  "adMode": "production",
+  "analyticsMode": "production",
+  "remoteConfigMode": "production",
+  "signing": "release",
+  "credentialsPresent": false
+}

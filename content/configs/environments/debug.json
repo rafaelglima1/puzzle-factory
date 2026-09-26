@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "environment": "debug",
+  "description": "Developer build. Debug menu, verbose logs, test/staging services only. Never contains production credentials.",
+  "debugMenu": true,
+  "verboseLogging": true,
+  "adMode": "disabled",
+  "analyticsMode": "disabled",
+  "remoteConfigMode": "disabled",
+  "signing": "debug",
+  "credentialsPresent": false
+}
