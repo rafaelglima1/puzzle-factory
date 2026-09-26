@@ -6,6 +6,31 @@ versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — M3 first playable integration (app composition + startup)
+
+- `TrafficM3AppController` (`game/integration/traffic/` + `.tscn`): the app
+  composition root that owns the M3 presentation shell and the session, wires
+  shell intents → session calls and session signals → `show_*` calls, keeps one
+  router binding for the app lifetime, lays out the real board after each level
+  starts (and on resize), and tears down leak-free. It contains no puzzle
+  correctness.
+- Application startup now points `application/run/main_scene` at the controller
+  scene, so the APK boots into **Project Traffic** (main menu, PLAY, real
+  levels) instead of the M0 placeholder. `bootstrap_test.gd` now proves the M3
+  composition root instead of the placeholder label (no boot validation was
+  weakened).
+- Presenter integration hardening: starting a level resets stale cosmetic state
+  (movement target, result lock, pending removals) so NEXT/RETRY/restart are
+  immediately playable and a restart cannot leave a tween pointing at a freed
+  entity view.
+- Cross-layer tests: `m3_app_integration_test.gd` (startup/play/real tap/win/
+  next/fail+retry/restart/menu re-entry/input de-dupe/responsive real boards),
+  `m3_app_resume_test.gd` (app restart resume without manual loads, missing and
+  malformed saves, debug isolation end-to-end, release debug gate) and
+  `m3_campaign_integration_test.gd` (all ten levels played through the real
+  shell/controller with the proven sequences, unlock progression 1→10, final
+  level terminal behaviour, plus a debug sweep of every level).
+
 ### Fixed — M3 session progress resume
 
 - `TrafficFirstPlayableSession` now owns progress initialization: its

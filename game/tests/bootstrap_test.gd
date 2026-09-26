@@ -1,5 +1,9 @@
 extends "res://tests/framework/test_base.gd"
-## Project bootstrap test: the Godot project must be well-formed for M0.
+## Project bootstrap test: the Godot project must be well-formed and boot into
+## the M3 production composition root (Project Traffic), not the M0 placeholder.
+## Deep UI boot assertions (main menu visible, PLAY available, "Project Traffic"
+## title) live in game/tests/m3_app_integration_test.gd, which drives the real
+## startup path.
 
 
 func run() -> void:
@@ -19,8 +23,8 @@ func run() -> void:
 	check(FileAccess.file_exists(icon_path), "project icon file exists")
 	check_eq(
 		str(cfg.get_value("application", "run/main_scene", "")),
-		"res://boot/boot.tscn",
-		"main scene is the M0 boot scene"
+		"res://integration/traffic/traffic_m3_app_controller.tscn",
+		"main scene is the M3 app composition root"
 	)
 
 	var features: PackedStringArray = cfg.get_value(
@@ -53,20 +57,17 @@ func run() -> void:
 		var instance: Node = packed.instantiate()
 		check(instance != null, "main scene instantiates")
 		if instance != null:
-			check(
-				_contains_label(instance, "Puzzle Factory"),
-				"boot screen displays the 'Puzzle Factory' placeholder title"
-			)
+			var script: Variant = instance.get_script()
+			check(script != null, "main scene has a startup script")
+			if script != null:
+				check_eq(
+					String(script.resource_path),
+					"res://integration/traffic/traffic_m3_app_controller.gd",
+					"startup script is the M3 app controller"
+				)
+			check(instance.has_method("start"), "startup entry exposes the production start API")
+			check(instance.has_method("shutdown"), "startup entry exposes shutdown for teardown")
 			instance.free()
 
 	var presets_ok := FileAccess.file_exists("res://export_presets.cfg")
 	check(presets_ok, "export_presets.cfg present (Android Debug configured)")
-
-
-func _contains_label(node: Node, expected_text: String) -> bool:
-	if node is Label and node.text == expected_text:
-		return true
-	for child: Node in node.get_children():
-		if _contains_label(child, expected_text):
-			return true
-	return false

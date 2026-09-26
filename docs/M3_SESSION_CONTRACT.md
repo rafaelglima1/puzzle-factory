@@ -84,32 +84,70 @@ simulation's lowercase ids (`staging_full`, `no_valid_moves`).
 ## 4. Presentation binding (exact order matters)
 
 ```gdscript
-# AGENT-2 shell, per level screen
+# Production: TrafficM3AppController owns this wiring (see section 7).
 var session := TrafficFirstPlayableSession.new(progress_store)   # AGENT-1 owns it
-presenter = Presenter.new()          # the shell owns this Node
-add_child(presenter)                 # _ready() builds it
-session.bind_presentation(presenter) # binds the router AND calls presenter.setup(board) + sync
-presenter.layout_for(viewport_size)  # AFTER bind_presentation (setup must precede layout)
-session.play()                       # or start_level(i) / debug_select_level(i)
+presenter = shell.get_traffic_presenter()    # the shell owns this Node
+session.bind_presentation(presenter)         # binds the router + presenter.setup()
+session.play()                               # level starts -> presenter.setup(board) ran
+shell.layout_for(viewport)                   # AFTER play(): the board DTO must exist first
 # on tap: session.dispatch_entity(entity_id_from_the_shell_hit_test)
 # per frame: in-tree presenters self-drive (_process → advance); do NOT also call advance
-# on resize: presenter.layout_for(size); session.refresh_presentation()
+# on resize: shell.layout_for(size); session.refresh_presentation()
 # leaving gameplay: session.unbind_presentation() (clears router subscribers), then free the presenter
 ```
 
 Rules:
 
-- `bind_presentation()` sets up the board DTO, objective chips, staging data and
-  the authoritative sync; the shell must not call `setup()` itself.
+- `bind_presentation()` binds the router and, once a level is active, calls
+  `presenter.setup(board)` + objective chips + authoritative sync; the shell must
+  not call `setup()` itself.
+- `layout_for()` must run **after** the level started (presenter setup), because
+  the board cannot be sized before its DTO exists.
 - The session forwards each command result with
   `adapter.forward_result(result)` and pushes authoritative state with
   `adapter.sync_authoritative_state(state, presenter)`; the shell never mutates
   `GameState` and never computes FIFO/matching/capacity/win/lose.
-- The shell owns tap hit-testing (there is no hit-test helper in presentation):
-  compute the cell from `presenter.board_view.cell_center` / `cell_size` and
-  match the entity DTO's `cell`/`footprint`, then call `dispatch_entity(id)`.
-- M3 does not require a `project.godot` main-scene change from AGENT-1; the M3
-  shell owns boot/menu scenes.
+- The shell owns tap hit-testing through `handle_tap_at(board_point)` (board-local
+  point, same path as the input catcher); the controller forwards the returned id.
+- Starting a level resets stale cosmetic state (movement target, result lock,
+  pending removals) so NEXT/RETRY/restart are immediately playable.
+
+## 7. Production composition (M3 integration)
+
+`game/integration/traffic/traffic_m3_app_controller.gd` (+ `.tscn`) is the app
+entry point (`application/run/main_scene`). It owns the shell, the session and
+product navigation, and is the only layer that may know both sides (ADR-013):
+
+```text
+boot -> TrafficM3AppController -> M3FirstPlayable shell (AGENT-2)
+                               -> TrafficFirstPlayableSession (AGENT-1)
+```
+
+Public API for menus/level select/tests:
+
+```gdscript
+var app := TrafficM3AppController.new()
+app.progress_path = "user://m3_progress.json"   # injectable (tests/QA)
+app.debug_enabled = OS.is_debug_build()         # applied to the shell's debug gate
+app.start()                                     # shell + session + binding + MAIN_MENU
+app.get_shell() / app.get_session() / app.get_presenter()
+app.highest_unlocked_level() / app.last_session_error()
+app.advance(delta)                              # headless only (in-tree presenters self-drive)
+app.layout_for(viewport)                        # explicit layout (tests / non-tree callers)
+app.shutdown()                                  # unbind + clear subscribers + free the shell
+```
+
+Wiring guarantees encoded in the controller:
+
+- shell intents → `play()` / `dispatch_entity()` / `restart_current_level()` /
+  `next_level()` / `debug_select_level()` / menu;
+- session signals → `show_main_menu` / `show_playing` / `show_win_result`
+  (`is_final_level` computed from the session) / `show_fail_result`;
+- one tap produces exactly one command (the shell de-dupes synthetic
+  mouse-after-touch within 400 ms);
+- one router binding for the app lifetime: Menu → Play → Menu never re-binds, so
+  no duplicated callbacks or subscriptions;
+- `shutdown()` clears subscribers and frees the shell, leaving no leaks.
 
 ## 5. Persistence
 
@@ -134,4 +172,14 @@ This is M3-minimal: M10 replaces it with the robust save/migration system.
 The ten M3 levels live in `game/integration/traffic/m3_level_catalogue.gd`
 (product data in the integration layer, ADR-013). M5 replaces this with the
 formal LevelSchema/loader and moves the data to `content/levels/`. Winning
-command sequences exist only in `game/tests/m3_levels_solvable_test.gd`.
+command sequences exist only in `game/tests/m3_levels_solvable_test.gd` and are
+reused by the campaign integration test.
+
+## 8. Cross-layer tests (M3 integration)
+
+| Test | Covers |
+|---|---|
+| `m3_app_integration_test.gd` | boot → MAIN_MENU/Project Traffic/PLAY, play → real board, real shell tap → win → WIN_RESULT + persistence, NEXT → level 2, debug fail → RETRY, restart, Menu→Play loop (no duplicate subscriptions), touch/mouse de-dupe (one tap = one command), responsive real boards (1080×1920 / 1080×2400 / 1600×2560) |
+| `m3_app_resume_test.gd` | app restart resumes the persisted unlock without any manual `load_progress()`, missing/malformed saves boot clean, debug isolation end-to-end (debug win shows the result, never unlocks, save bytes untouched, normal Play unaffected), release gate hides the debug selector |
+| `m3_campaign_integration_test.gd` | full normal campaign: all ten levels played through the real shell/controller to WIN_RESULT with the proven sequences, unlock progression 1→10, progress persisted; final level hides NEXT and stays terminal; plus a debug sweep presenting every level |
+| `bootstrap_test.gd` | the project boots into the M3 app composition root (`main_scene` = controller scene, script = controller, `start`/`shutdown` API present) |

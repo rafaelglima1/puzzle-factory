@@ -121,6 +121,23 @@ M3 adds, in the same layer:
   presentation binding and the per-command `forward_result` +
   `sync_authoritative_state` contract. It contains no layout, copy, juice,
   coins, ads or boosters.
+- `traffic_m3_app_controller.gd` (+ `.tscn`) — **the app composition root**
+  (`application/run/main_scene` since the M3 integration pass). It owns the M3
+  presentation shell (AGENT-2) and the session, translates shell intents into
+  session calls and session signals into `show_*` calls, keeps a single
+  router binding for the app lifetime, layouts the real board after each level
+  starts, and tears everything down leak-free. It is the only place allowed to
+  know both sides, exactly as ADR-013 requires; presentation still never imports
+  `game/core/**` or `game/puzzle/**`.
+
+Startup flow:
+
+```text
+project.godot (main_scene) -> TrafficM3AppController
+    -> M3FirstPlayable shell (MAIN_MENU, "Project Traffic", PLAY)
+    -> TrafficFirstPlayableSession (reloads the persisted M3 profile)
+    -> presenter binding (adapter/router, official event vocabulary)
+```
 
 Persistence (`game/persistence/m3_progress_store.gd`) is generic infrastructure
 (product-free, guarded by `architecture_test.gd`): one canonical JSON profile in
@@ -182,14 +199,17 @@ Implemented:
   (`game/integration/traffic/`, product data — M5 replaces it), and
   `M3ProgressStore` (`game/persistence/`, minimal unlock persistence under
   `user://`). Contract for the UI shell: `docs/M3_SESSION_CONTRACT.md`.
-  The M3 presentation shell (menus, play flow, result screens, boot scene)
-  is AGENT-2's.
+- **M3 (integration, both halves):** `TrafficM3AppController` composes the
+  AGENT-2 presentation shell with the AGENT-1 session and becomes the app
+  entry point, so the APK boots into **Project Traffic** (main menu → Play →
+  real tapping → win/fail → retry/next over ten levels) instead of the M0
+  placeholder. The shell owns all presentation; the controller owns product
+  navigation and forwards intents/signals only.
 
 Deferred:
 
 | Concern | Milestone |
 |---|---|
-| M3 presentation shell: menu, play flow, HUD, result screens, level select surface, boot scene | M3 (AGENT-2) |
 | Juice/audio/haptics implementation, settings persistence | M4 |
 | Level schema/loader/validator/migrations, obstacles; replaces the M3 catalogue | M5 |
 | Solver + state hashing, difficulty analyzer, generator | M6–M8 |

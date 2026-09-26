@@ -44,10 +44,27 @@ var _gameplay: GameplayScreenScript = null
 var _result: ResultScreenScript = null
 var _debug_select: DebugLevelSelectScript = null
 var _built := false
+## Integration hardening (M3, found on a physical device): Android delivers the
+## touch event first and a synthetic mouse event right after it. When a tap
+## synchronously changes the screen (e.g. a winning move shows the result
+## screen), that synthetic mouse event would land on the control that just
+## appeared under the finger and could activate it, skipping the result. After
+## every state change exactly one synthetic mouse event is therefore swallowed.
+var _swallow_next_mouse := false
 
 
 func _ready() -> void:
 	build()
+
+
+func _input(event: InputEvent) -> void:
+	if not _swallow_next_mouse:
+		return
+	if event is InputEventMouseButton:
+		_swallow_next_mouse = false
+		var viewport := get_viewport()
+		if viewport != null:
+			viewport.set_input_as_handled()
 
 
 func build() -> void:
@@ -339,6 +356,8 @@ func _ensure_built() -> void:
 
 
 func _apply_state() -> void:
+	# Any state change arms the one-event guard above (see `_swallow_next_mouse`).
+	_swallow_next_mouse = true
 	if _main_menu != null:
 		_main_menu.visible = _state == State.MAIN_MENU
 	if _gameplay != null:

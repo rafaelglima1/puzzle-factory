@@ -137,6 +137,18 @@ func build() -> void:
 
 func setup(board_data: BoardData) -> void:
 	_ensure_built()
+	# Integration hardening (M3 cross-integration): a level always starts from
+	# clean cosmetic state. Without this, starting/restarting a level while a
+	# movement tween or a win/fail sequence is still active could keep the board
+	# input-locked or leave the movement controller pointing at a freed entity
+	# view. Simulation state is unaffected.
+	_movement_controller.stop()
+	_movement_active = false
+	_movement_has_target = false
+	_movement_entity_id = &""
+	_pending_removals.clear()
+	_clear_active_effect()
+	input_gate.release(LOCK_OWNER_MOVE)
 	board_view.set_board_data(board_data)
 
 

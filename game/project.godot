@@ -12,7 +12,7 @@ config_version=5
 
 config/name="Puzzle Factory"
 config/description="Deterministic congestion puzzle platform. First product: Project Traffic."
-run/main_scene="res://boot/boot.tscn"
+run/main_scene="res://integration/traffic/traffic_m3_app_controller.tscn"
 config/features=PackedStringArray("4.7", "Mobile")
 config/version="0.1.0"
 config/icon="res://icon.png"

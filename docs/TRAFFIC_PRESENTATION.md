@@ -273,9 +273,13 @@ fail shows `TRY AGAIN` + RETRY/MENU. No rewards, coins, progression or revive.
 
 **Debug gating.** The level selector is only reachable while `debug_enabled`
 (default `OS.is_debug_build()`) is true, so editor/Debug exports expose it and
-release exports do not (blueprint §67/§68). No `project.godot` / boot-scene
-change is made here; the M3 integration pass switches app startup and supplies
-real session wiring.
+release exports do not (blueprint §67/§68). The shell makes no `project.godot` /
+boot-scene change itself; the M3 integration pass (AGENT-1,
+`game/integration/traffic/traffic_m3_app_controller.gd` + `.tscn`) switched
+`application/run/main_scene` to that controller, owns the shell Node, supplies
+the real session wiring and explicitly calls `show_main_menu()` at startup so
+gating is deterministic. Debug-selected attempts are isolated from production
+progression by the session.
 
 **Responsive.** Header is a separate `Style.HEADER_HEIGHT` band; the presenter
 is offset below it and re-laid-out, so board/staging keep their own margins.
