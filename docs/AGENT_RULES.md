@@ -45,6 +45,28 @@ weaken acceptance criteria or skip milestones
 `agent/core`, `agent/game`, `feature/*`, `fix/*`, `release/*`.
 Agents work on their assigned branch; no direct development on `main`.
 
+## Ownership map (recorded decision, 2026-09-26)
+
+| Path | Owner |
+|---|---|
+| `game/core/**`, `game/puzzle/**`, `game/levels/**`, `game/solver/**`, `game/generator/**`, `game/persistence/**` | AGENT-1 |
+| `game/themes/base/**` (generic contracts) | AGENT-1 |
+| `game/themes/traffic/**` (concrete theme) | AGENT-2 |
+| `game/ui/**`, `game/audio/**`, `game/haptics/**`, presentation/animations/particles | AGENT-2 |
+| `tests/**` core suites | AGENT-1 |
+
+Cross-boundary changes require coordination (event contracts, state/save
+schema keys, shared abstractions). Disagreements are resolved with an ADR,
+never by silent divergence. `game/tests/architecture_test.gd` automatically
+enforces that generic layers stay free of theme vocabulary, presentation
+asset references and scene-tree usage.
+
+## Design reference (recorded decision, 2026-09-26)
+
+`1080 × 1920` is an approved **design reference only** — not a fixed logical
+rendering requirement. Responsive behaviour across the §62 device matrix
+remains AGENT-2's responsibility (see `docs/ARCHITECTURE.md` §6).
+
 ## Completion report (§80 / §97)
 
 ```text
