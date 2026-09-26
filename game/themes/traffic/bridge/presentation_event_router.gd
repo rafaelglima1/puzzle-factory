@@ -119,6 +119,14 @@ func subscriber_count(event_type: StringName = &"") -> int:
 	return _subscribers[event_type].size()
 
 
+## Removes every subscriber. Lifecycle helper for callers that rebuild wiring
+## per level/session: it breaks reference cycles between the router, the
+## subscribing callables and their captured owners. Dispatch stays safe
+## afterwards (unknown events are ignored).
+func clear_subscribers() -> void:
+	_subscribers.clear()
+
+
 ## Returns how many subscribers received the event.
 func dispatch(event_type: StringName, payload: Dictionary = {}) -> int:
 	if not _subscribers.has(event_type):

@@ -1,7 +1,7 @@
-extends "res://tests/framework/test_base.gd"
+﻿extends "res://tests/framework/test_base.gd"
 ## M2 CROSS-LAYER integration tests (AGENT-1 / M2-INTEGRATOR).
 ##
-## These tests wire the REAL implementations together — no mock event
+## These tests wire the REAL implementations together â€” no mock event
 ## vocabulary and no self-consistency shortcuts:
 ##   TrafficGameFactory -> Simulation -> DispatchEntityCommand
 ##   -> TrafficPresentationAdapter -> PresentationEventRouter -> TrafficPresenter
@@ -52,6 +52,7 @@ class Recorder extends RefCounted:
 
 func run() -> void:
 	_unit_official_vocabulary()
+	_unit_router_lifecycle()
 	_unit_no_legacy_vocabulary_in_sources()
 	_unit_enrichment_and_projection()
 	_e2e_happy_path_with_turn()
@@ -149,6 +150,17 @@ func _distance_to_segment(point: Vector2, a: Vector2, b: Vector2) -> float:
 	return point.distance_to(a + ab * t)
 
 
+## Centralized presenter disposal for the cross-layer tests. When the wired
+## router is supplied its subscribers are cleared first, which breaks the
+## adapter <-> router <-> subscriber-callable reference cycle (Godot does not
+## collect RefCounted cycles), so the headless suite exits without leaks.
+func _dispose(presenter: Variant, router: Variant = null) -> void:
+	if router != null and router.has_method("clear_subscribers"):
+		router.call("clear_subscribers")
+	presenter.teardown()
+	presenter.free()
+
+
 # --- vocabulary ---------------------------------------------------------------
 
 func _unit_official_vocabulary() -> void:
@@ -176,6 +188,20 @@ func _unit_official_vocabulary() -> void:
 	check_eq(TrafficEventMap.translate_result(null).size(), 0, "null results translate to nothing")
 	check_eq(Router.M2_EXPECTED_EVENTS[0], &"entity_arrived", "superseded proposal list kept for compatibility")
 	check(not Router.M2_EVENTS.has(&"entity_arrived"), "entity_arrived is not part of the official vocabulary")
+
+
+func _unit_router_lifecycle() -> void:
+	var router: Variant = Router.new()
+	var received: Array = []
+	router.subscribe(&"entity_moved", func(name: StringName, _payload: Dictionary) -> void: received.append(name))
+	check_eq(router.subscriber_count(), 1, "subscriber registered")
+	check_eq(router.dispatch(&"entity_moved", {}), 1, "dispatch reaches the subscriber")
+	check_eq(router.ignored_count, 0, "known event is not counted as ignored")
+	check_eq(router.dispatch(&"not_an_event", {}), 0, "unknown event dispatches to nobody")
+	check_eq(router.ignored_count, 1, "unknown event counted as ignored")
+	router.clear_subscribers()
+	check_eq(router.subscriber_count(), 0, "lifecycle helper clears subscriptions")
+	check_eq(router.dispatch(&"entity_moved", {}), 0, "dispatch after clearing is a safe no-op")
 
 
 func _unit_no_legacy_vocabulary_in_sources() -> void:
@@ -340,8 +366,7 @@ func _e2e_happy_path_with_turn() -> void:
 	if destination_view != null:
 		check_eq(destination_view.queue_size(), 0, "authoritative queue drained in presentation")
 	check_eq(presenter.staging_view.pressure(), TW_PRESSURE_NORMAL, "staging pressure synchronized")
-	presenter.teardown()
-	presenter.free()
+	_dispose(presenter, wired["router"])
 
 
 const TW_PRESSURE_NORMAL := &"normal"
@@ -386,8 +411,7 @@ func _e2e_staging_path() -> void:
 	check_eq(presenter.staging_view.pressure(), &"full", "authoritative pressure applied after sync")
 	var destination_view: Node2D = presenter.board_view.destination_view(&"station_a")
 	check(destination_view != null and destination_view.queue_size() == 0, "authoritative empty queue applied after sync")
-	presenter.teardown()
-	presenter.free()
+	_dispose(presenter, wired["router"])
 
 
 func _e2e_failure_localization() -> void:
@@ -403,8 +427,7 @@ func _e2e_failure_localization() -> void:
 			&"level.fail.no_moves",
 			"no_valid_moves maps to its localization key through the real presenter"
 		)
-		single_presenter.teardown()
-		single_presenter.free()
+		_dispose(single_presenter, single["router"])
 
 	# staging_full (one slot, two unserved vehicles).
 	var definition := _unserved_level(1)
@@ -428,8 +451,7 @@ func _e2e_failure_localization() -> void:
 		"staging_full maps to its localization key through the real presenter"
 	)
 	check_eq(presenter.active_sequence(), &"fail", "staging_full runs the fail sequence")
-	presenter.teardown()
-	presenter.free()
+	_dispose(presenter, full["router"])
 
 
 func _unit_orientation_degrees() -> void:
@@ -455,8 +477,7 @@ func _unit_orientation_degrees() -> void:
 	check(view != null, "entity view created for orientation check")
 	if view != null:
 		check_eq(view.rotation_degrees, 270.0, "presentation applies degrees directly")
-	presenter.teardown()
-	presenter.free()
+	_dispose(presenter, wired["router"])
 
 
 func _e2e_movement_synchronization() -> void:
@@ -519,5 +540,4 @@ func _e2e_movement_synchronization() -> void:
 	# Unknown M2 proposal names stay safely ignorable.
 	check(not presenter.handle_event(Router.M2_EXPECTED_EVENTS[0], {}), "superseded proposal name remains ignored")
 	check(not presenter.handle_event(&"totally_unknown_event", {}), "unknown events remain ignored")
-	presenter.teardown()
-	presenter.free()
+	_dispose(presenter)
