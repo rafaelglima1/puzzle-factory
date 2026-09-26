@@ -1,282 +1,523 @@
 extends "res://tests/framework/test_base.gd"
-## M2 Traffic integration layer: event mapping, presentation adapter, DTOs.
+## M2 CROSS-LAYER integration tests (AGENT-1 / M2-INTEGRATOR).
+##
+## These tests wire the REAL implementations together — no mock event
+## vocabulary and no self-consistency shortcuts:
+##   TrafficGameFactory -> Simulation -> DispatchEntityCommand
+##   -> TrafficPresentationAdapter -> PresentationEventRouter -> TrafficPresenter
+##
+## They verify the official snake_case vocabulary end to end, presentation
+## hooks (movement/loading/match/objective/win/fail), the visual lifecycle of
+## completed and staged entities, authoritative state synchronization,
+## orientation units and movement sequencing.
 
-const ROBOT := preload("res://themes/traffic/bridge/presentation_event_router.gd")
+const Presenter := preload("res://themes/traffic/traffic_presenter.gd")
+const Router := preload("res://themes/traffic/bridge/presentation_event_router.gd")
+const MatchEffect := preload("res://themes/traffic/components/match_effect.gd")
+const TrafficTheme := preload("res://themes/traffic/traffic_theme.gd")
+
+const INTEGRATION_DIR := "res://integration/traffic"
+
+## Obsolete provisional vocabulary that must not reappear anywhere in the
+## integration layer (single-vocabulary rule).
+const LEGACY_NAMES: Array[String] = [
+	"EntityPlaced", "EntityMoveStarted", "EntityArrived", "EntityBlocked",
+	"CommandRejected", "EntityExited", "ItemLoaded", "MatchOccurred",
+	"ObjectiveCompleted", "LevelCompleted", "LevelFailed",
+	"StagingReceived", "StagingChanged", "StagingPressureChanged",
+]
 
 
-class Collector extends RefCounted:
-	var received: Array[Dictionary] = []
+class Recorder extends RefCounted:
+	var names: Array[StringName] = []
+	var payloads: Dictionary = {}
 
 	func on_event(event_name: StringName, payload: Dictionary) -> void:
-		received.append({"name": event_name, "payload": payload})
+		names.append(event_name)
+		if not payloads.has(event_name):
+			payloads[event_name] = []
+		(payloads[event_name] as Array).append(payload)
 
-	func names() -> Array[StringName]:
-		var collected: Array[StringName] = []
-		for entry in received:
-			collected.append(entry["name"])
-		return collected
+	func has(event_name: StringName) -> bool:
+		return names.has(event_name)
 
-	func payload_for(event_name: StringName) -> Dictionary:
-		for entry in received:
-			if entry["name"] == event_name:
-				return entry["payload"]
-		return {}
+	func last_payload(event_name: StringName) -> Dictionary:
+		if not payloads.has(event_name):
+			return {}
+		var entries: Array = payloads[event_name]
+		if entries.is_empty():
+			return {}
+		return entries[entries.size() - 1]
 
 
 func run() -> void:
-	_event_map_catalogue()
-	_translation_payloads()
-	_adapter_forwards_to_router()
-	_adapter_read_only()
-	_view_data_projection()
-	_end_to_end_session_names()
+	_unit_official_vocabulary()
+	_unit_no_legacy_vocabulary_in_sources()
+	_unit_enrichment_and_projection()
+	_e2e_happy_path_with_turn()
+	_e2e_staging_path()
+	_e2e_failure_localization()
+	_unit_orientation_degrees()
+	_e2e_movement_synchronization()
 
 
-func _level() -> Dictionary:
+# --- levels -------------------------------------------------------------------
+
+func _turning_path_level() -> Dictionary:
 	return {
-		"level_id": "traffic_adapter",
-		"seed": 4,
+		"level_id": "traffic_e2e_turn",
+		"seed": 3,
 		"width": 5,
-		"height": 2,
-		"staging_slots": 2,
-		"paths": {"route_v1": [{"x": 0, "y": 0}, {"x": 1, "y": 0}, {"x": 2, "y": 0}]},
+		"height": 4,
+		"staging_slots": 3,
+		"paths": {"route_v1": [
+			{"x": 0, "y": 0}, {"x": 1, "y": 0}, {"x": 2, "y": 0}, {"x": 2, "y": 1}, {"x": 2, "y": 2},
+		]},
 		"stations": [{"id": "station_a", "accepted": ["COLOR_A"], "capacity": 2, "queue": "q_a",
-			"cell": {"x": 3, "y": 0}, "footprint": {"width": 2, "height": 1}}],
-		"queues": {"q_a": ["p1"]},
-		"passengers": [{"id": "p1", "color": "COLOR_A", "station": "station_a"}],
+			"cell": {"x": 4, "y": 2}, "footprint": {"width": 2, "height": 1}}],
+		"queues": {"q_a": ["p1", "p2"]},
+		"passengers": [
+			{"id": "p1", "color": "COLOR_A", "station": "station_a"},
+			{"id": "p2", "color": "COLOR_A", "station": "station_a"},
+		],
 		"vehicles": [{"id": "v1", "type": "compact", "color": "COLOR_A", "capacity": 2,
+			"footprint": {"width": 1, "height": 1},
 			"cell": {"x": 0, "y": 0}, "route": "route_v1", "station": "station_a"}],
 	}
 
 
-func _new_adapter(collector: Collector) -> Dictionary:
-	var router: Variant = ROBOT.new()
+func _unserved_level(staging_slots: int = 1) -> Dictionary:
+	return {
+		"level_id": "traffic_e2e_staging",
+		"seed": 4,
+		"width": 5,
+		"height": 2,
+		"staging_slots": staging_slots,
+		"paths": {
+			"route_v1": [{"x": 0, "y": 0}, {"x": 1, "y": 0}],
+			"route_v2": [{"x": 3, "y": 1}, {"x": 4, "y": 1}],
+		},
+		"stations": [{"id": "station_a", "accepted": ["COLOR_A"], "capacity": 0, "queue": "q_a",
+			"cell": {"x": 4, "y": 0}, "footprint": {"width": 1, "height": 1}}],
+		"queues": {"q_a": []},
+		"passengers": [],
+		"vehicles": [{"id": "v1", "type": "compact", "color": "COLOR_A", "capacity": 1,
+			"footprint": {"width": 1, "height": 1},
+			"cell": {"x": 0, "y": 0}, "route": "route_v1", "station": "station_a"}],
+	}
+
+
+# --- harness ------------------------------------------------------------------
+
+## Builds the production wiring: simulation + adapter + real router + real
+## presenter, bound through the adapter's production-compatible API.
+func _wire(definition: Dictionary) -> Dictionary:
+	var simulation := TrafficGameFactory.build(definition)
+	if simulation == null:
+		check(false, "level builds for cross-layer wiring")
+		return {}
+	var router: Variant = Router.new()
 	var adapter := TrafficPresentationAdapter.new(router)
-	for event_type in PresentationContract.known_event_types():
-		var name := TrafficEventMap.presentation_name(event_type)
-		if name != &"":
-			router.subscribe(name, Callable(collector, "on_event"))
-	router.subscribe(TrafficEventMap.NAME_STAGING_RECEIVED, Callable(collector, "on_event"))
-	router.subscribe(TrafficEventMap.NAME_STAGING_CHANGED, Callable(collector, "on_event"))
-	router.subscribe(TrafficEventMap.NAME_STAGING_PRESSURE, Callable(collector, "on_event"))
-	return {"adapter": adapter, "router": router}
+	var presenter: Variant = Presenter.new()
+	presenter.build()
+	presenter.layout_for(Vector2(1080, 1920))
+	var provider := func(id: StringName, _payload: Dictionary) -> Variant:
+		var entity: Entity = simulation.get_state().get_entity(id)
+		return adapter.build_entity_view(entity) if entity != null else null
+	check(adapter.bind_presenter(presenter, provider), "adapter binds the presenter through the production API")
+	presenter.setup(adapter.build_board_view(simulation.get_state()))
+	var recorder := Recorder.new()
+	router.event_forwarded.connect(Callable(recorder, "on_event"))
+	return {"simulation": simulation, "router": router, "adapter": adapter, "presenter": presenter, "recorder": recorder}
 
 
-func _event_map_catalogue() -> void:
-	var unmapped: Array[String] = []
-	for event_type in PresentationContract.known_event_types():
-		if not TrafficEventMap.is_mapped(event_type):
-			unmapped.append(String(event_type))
-	check(unmapped.is_empty(), "every contract event type is mapped to presentation (%s)" % ", ".join(unmapped))
-	check(not TrafficEventMap.is_mapped(&"not_an_event"), "unknown event type is not mapped")
-	check_eq(TrafficEventMap.presentation_name(DomainEvent.ENTITY_MOVED), &"EntityArrived", "entity_moved maps to EntityArrived")
-	check_eq(TrafficEventMap.presentation_name(DomainEvent.ENTITY_COMPLETED), &"EntityExited", "entity_completed maps to EntityExited")
-	check_eq(TrafficEventMap.presentation_name(DomainEvent.GAME_COMPLETED), &"LevelCompleted", "game_completed maps to LevelCompleted")
-	check_eq(TrafficEventMap.presentation_name(DomainEvent.GAME_FAILED), &"LevelFailed", "game_failed maps to LevelFailed")
-	check_eq(TrafficEventMap.presentation_name(DomainEvent.STAGING_CHANGED), &"StagingChanged", "staging default name")
-	check_eq(TrafficEventMap.presentation_name(&"not_an_event"), &"", "unmapped name is empty")
-
-	check_eq(TrafficEventMap.pressure_for(0, 4), &"normal", "empty staging is normal")
-	check_eq(TrafficEventMap.pressure_for(1, 4), &"normal", "half-full staging is normal")
-	check_eq(TrafficEventMap.pressure_for(3, 4), &"warning", "one free slot is a warning")
-	check_eq(TrafficEventMap.pressure_for(4, 4), &"full", "no free slots is full")
-	check_eq(TrafficEventMap.pressure_for(1, 1), &"full", "single slot occupied is full")
-	check_eq(TrafficEventMap.pressure_for(0, 0), &"full", "zero capacity is full")
-	check_eq(TrafficEventMap.pressure_for(0, 1), &"warning", "one free slot of one is a warning")
-
-
-func _translation_payloads() -> void:
-	var moved := DomainEvent.entity_moved(&"v1", GridPosition.new(0, 0), GridPosition.new(2, 0), [
-		GridPosition.new(0, 0), GridPosition.new(1, 0), GridPosition.new(2, 0),
-	])
-	var moved_entries := TrafficEventMap.translate(moved)
-	check_eq(moved_entries.size(), 1, "move translates to one presentation event")
-	check_eq(moved_entries[0]["name"], &"EntityArrived", "move presentation name")
-	check_eq(int(moved_entries[0]["payload"]["path"].size()), 3, "path cells forwarded for interpolation")
-
-	var staging := StagingArea.new(2)
-	staging.add(&"v1")
-	var added := DomainEvent.staging_changed(DomainEvent.STAGING_ADDED, &"v1", 0, staging)
-	var added_entries := TrafficEventMap.translate(added)
-	check_eq(added_entries.size(), 2, "staging add translates to receipt + pressure")
-	check_eq(added_entries[0]["name"], &"StagingReceived", "staging receipt name")
-	check_eq(added_entries[1]["name"], &"StagingPressureChanged", "staging pressure name")
-	check_eq(added_entries[1]["payload"]["pressure"], "warning", "pressure computed for one free slot")
-
-	staging.remove(&"v1")
-	var removed := DomainEvent.staging_changed(DomainEvent.STAGING_REMOVED, &"v1", 0, staging)
-	var removed_entries := TrafficEventMap.translate(removed)
-	check_eq(removed_entries.size(), 2, "staging removal translates to change + pressure")
-	check_eq(removed_entries[0]["name"], &"StagingChanged", "staging removal name")
-
-	var failed := DomainEvent.game_failed(FailReason.to_string_name(FailReason.Value.NO_VALID_MOVES), 3)
-	var failed_entries := TrafficEventMap.translate(failed)
-	check_eq(failed_entries.size(), 1, "failure translates to one event")
-	check_eq(failed_entries[0]["name"], &"LevelFailed", "failure presentation name")
-	check_eq(failed_entries[0]["payload"]["fail_reason"], "no_valid_moves", "failure reason forwarded")
-
-	check_eq(TrafficEventMap.translate(DomainEvent.new(&"mystery", {"x": 1})).size(), 0, "unknown events translate to nothing")
-	check_eq(TrafficEventMap.translate(null).size(), 0, "null events are safe")
-	check_eq(TrafficEventMap.translate_result(null).size(), 0, "null results are safe")
-
-
-func _adapter_forwards_to_router() -> void:
-	var collector := Collector.new()
-	var built := _new_adapter(collector)
-	var adapter: Variant = built["adapter"]
-	var simulation := TrafficGameFactory.build(_level())
-	check(simulation != null, "adapter level builds")
-	if simulation == null:
-		return
-	var result := simulation.execute(DispatchEntityCommand.new(&"v1"))
+func _dispatch(wired: Dictionary, entity_id: StringName) -> CommandResult:
+	var simulation: Simulation = wired["simulation"]
+	var adapter: TrafficPresentationAdapter = wired["adapter"]
+	var result := simulation.execute(DispatchEntityCommand.new(entity_id))
 	var dispatched: int = adapter.forward_result(result)
-	check(dispatched > 0, "adapter dispatches presentation events")
-	var names := collector.names()
-	check(names.has(&"EntityMoveStarted"), "move start forwarded")
-	check(names.has(&"EntityArrived"), "arrival forwarded")
-	check(names.has(&"ItemLoaded"), "loading forwarded")
-	check(names.has(&"MatchOccurred"), "match forwarded")
-	check(names.has(&"EntityExited"), "completion forwarded")
-	check(names.has(&"ObjectiveCompleted"), "objective forwarded")
-	check(names.has(&"LevelCompleted"), "level completion forwarded")
-	check_eq(adapter.forwarded_event_count, dispatched, "forwarded counter matches dispatches")
-
-	var unknown_result := CommandResult.success([DomainEvent.new(&"mystery_event", {"a": 1})])
-	var unknown_dispatched: int = adapter.forward_result(unknown_result)
-	check_eq(unknown_dispatched, 0, "unknown events dispatch nothing")
-	check_eq(adapter.ignored_event_count, 1, "unknown events are counted as ignored")
-
-	var placed_result := CommandResult.success([
-		DomainEvent.entity_placed(&"v9", GridPosition.new(1, 1), Footprint.new(1, 1)),
-	])
-	check_eq(adapter.forward_result(placed_result), 1, "placement forwards one presentation event")
-	check(collector.names().has(&"EntityPlaced"), "placement presentation name")
-	var rejected_result := CommandResult.rejected(CommandResult.Status.INVALID, &"unknown_entity", [
-		DomainEvent.command_rejected(CommandResult.Status.INVALID, &"unknown_entity", &"ghost"),
-	])
-	check(adapter.forward_result(rejected_result) > 0, "rejection forwards presentation feedback")
-	check(collector.names().has(&"CommandRejected"), "rejection presentation name")
+	check(dispatched > 0, "adapter dispatched presentation events for %s" % entity_id)
+	return result
 
 
-func _adapter_read_only() -> void:
-	var collector := Collector.new()
-	var built := _new_adapter(collector)
-	var adapter: Variant = built["adapter"]
-	var simulation := TrafficGameFactory.build(_level())
+func _distance_to_segment(point: Vector2, a: Vector2, b: Vector2) -> float:
+	var ab := b - a
+	var length_squared := ab.length_squared()
+	if length_squared <= 0.0001:
+		return point.distance_to(a)
+	var t := clampf((point - a).dot(ab) / length_squared, 0.0, 1.0)
+	return point.distance_to(a + ab * t)
+
+
+# --- vocabulary ---------------------------------------------------------------
+
+func _unit_official_vocabulary() -> void:
+	for event_type in PresentationContract.known_event_types():
+		check(TrafficEventMap.is_mapped(event_type), "contract event '%s' is mapped" % event_type)
+		check_eq(TrafficEventMap.presentation_name(event_type), event_type, "presentation name is the official name for %s" % event_type)
+	check_eq(
+		TrafficEventMap.official_names().size(),
+		PresentationContract.known_event_types().size(),
+		"integration vocabulary matches the contract catalog"
+	)
+	check_eq(TrafficEventMap.official_names().size(), 12, "twelve official events (M1 + M2)")
+	check_eq(Router.M1_EVENTS.size(), 5, "router keeps the five M1 events")
+	check_eq(Router.M2_EVENTS.size(), 7, "router declares the seven additive M2 events")
+	check_eq(Router.ALL_EVENTS.size(), 12, "router subscribes the full official catalog")
+	check_eq(Router.M1_EVENTS.size() + Router.M2_EVENTS.size(), Router.ALL_EVENTS.size(), "M1 + M2 covers every official event")
+	var snake_case_only := true
+	for name in Router.ALL_EVENTS:
+		if String(name) != String(name).to_lower():
+			snake_case_only = false
+	check(snake_case_only, "every official event name is snake_case")
+	check(not TrafficEventMap.is_mapped(&"not_an_event"), "unknown event type is not mapped")
+	check_eq(TrafficEventMap.presentation_name(&"not_an_event"), &"", "unknown event type has no presentation name")
+	check_eq(TrafficEventMap.translate(null).size(), 0, "null events translate to nothing")
+	check_eq(TrafficEventMap.translate_result(null).size(), 0, "null results translate to nothing")
+	check_eq(Router.M2_EXPECTED_EVENTS[0], &"entity_arrived", "superseded proposal list kept for compatibility")
+	check(not Router.M2_EVENTS.has(&"entity_arrived"), "entity_arrived is not part of the official vocabulary")
+
+
+func _unit_no_legacy_vocabulary_in_sources() -> void:
+	var scripts := _collect_gd(INTEGRATION_DIR)
+	check(scripts.size() >= 3, "integration scripts discovered (%d)" % scripts.size())
+	var violations: Array[String] = []
+	for path: String in scripts:
+		var text := FileAccess.get_file_as_string(path)
+		for legacy: String in LEGACY_NAMES:
+			if text.contains(legacy):
+				violations.append("%s contains '%s'" % [path, legacy])
+	check(violations.is_empty(), "integration layer keeps a single official vocabulary (%s)" % ", ".join(violations))
+
+
+func _collect_gd(path: String) -> Array[String]:
+	var scripts: Array[String] = []
+	for file in DirAccess.get_files_at(path):
+		if file.ends_with(".gd"):
+			scripts.append(path.path_join(file))
+	for directory in DirAccess.get_directories_at(path):
+		scripts.append_array(_collect_gd(path.path_join(directory)))
+	return scripts
+
+
+# --- enrichment + projection --------------------------------------------------
+
+func _unit_enrichment_and_projection() -> void:
+	var simulation := TrafficGameFactory.build(_turning_path_level())
+	check(simulation != null, "enrichment level builds")
 	if simulation == null:
-		check(false, "adapter level builds for read-only check")
 		return
-	var state := simulation.get_state()
+	var adapter := TrafficPresentationAdapter.new(Router.new())
 	var result := simulation.execute(DispatchEntityCommand.new(&"v1"))
-	var before := simulation.snapshot()
-	adapter.forward_result(result)
-	adapter.build_board_view(state)
-	adapter.build_staging_view(state)
-	adapter.build_progress_snapshot(state)
-	adapter.build_entity_view(state.get_entity(&"v1"))
-	adapter.build_item_view(Item.new(&"i1", &"unit_item", &"COLOR_A"))
-	check(Serialization.values_equal(before, simulation.snapshot()), "adapter never mutates simulation state")
+	var entries := TrafficEventMap.translate_result(result)
+	var started: Dictionary = {}
+	var moved: Dictionary = {}
+	var staging: Array[Dictionary] = []
+	for entry in entries:
+		match entry["name"]:
+			&"entity_move_started":
+				started = entry
+			&"entity_moved":
+				moved = entry
+			&"staging_changed":
+				staging.append(entry)
+	check(not started.is_empty(), "entity_move_started forwarded with the official name")
+	check(not moved.is_empty(), "entity_moved forwarded with the official name")
+	var path: Variant = started["payload"].get("path", null)
+	check(typeof(path) == TYPE_ARRAY and (path as Array).size() == 5, "move-started payload carries the full logical path")
+	if typeof(path) == TYPE_ARRAY and not (path as Array).is_empty():
+		var last: Dictionary = (path as Array)[(path as Array).size() - 1]
+		check_eq(int(last["x"]), 2, "path ends at the authoritative target (x)")
+		check_eq(int(last["y"]), 2, "path ends at the authoritative target (y)")
+	check(Serialization.values_equal(started["payload"].get("to", {}), {"x": 2, "y": 2}), "move-started target matches the path target")
 
-
-func _view_data_projection() -> void:
-	var simulation := TrafficGameFactory.build(_level())
-	if simulation == null:
-		check(false, "adapter level builds for projection")
-		return
 	var state := simulation.get_state()
-	var adapter := TrafficPresentationAdapter.new()
+	var entity: Entity = state.get_entity(&"v1")
+	entity.orientation = Direction.Value.EAST
+	var entity_view: Variant = adapter.build_entity_view(entity)
+	check_eq(entity_view.orientation, 90.0, "adapter projects EAST as 90 degrees")
+	check_eq(entity_view.cell, Vector2i(0, 0), "adapter projects the entity cell")
+	check_eq(entity_view.footprint, Vector2i(1, 1), "adapter projects the entity footprint")
 
-	var board_view: Variant = adapter.build_board_view(state)
-	check_eq(board_view.width, 5, "board view width")
-	check_eq(board_view.height, 2, "board view height")
-	check_eq(board_view.entity_count(), 1, "board view lists placed entities")
-	check_eq(board_view.destination_count(), 1, "board view lists stations")
-
-	var entity_view: Variant = adapter.build_entity_view(state.get_entity(&"v1"))
-	check_eq(entity_view.id, &"v1", "entity view id")
-	check_eq(entity_view.entity_type, &"compact", "entity view type")
-	check_eq(entity_view.color_key, &"COLOR_A", "entity view color key")
-	check_eq(entity_view.cell, Vector2i(0, 0), "entity view cell")
-	check_eq(entity_view.state, &"idle", "entity view state name")
-	check(typeof(entity_view.orientation) == TYPE_FLOAT, "entity view orientation is a float")
-	check_eq(entity_view.get_script().resource_path, "res://themes/traffic/model_entity_view_data.gd", "uses the AGENT-2 entity DTO")
-
-	var destination_view: Variant = adapter.build_destination_view(state.get_destination(&"station_a"), state)
-	check_eq(destination_view.id, &"station_a", "station view id")
-	check_eq(destination_view.destination_type, &"station", "station view type")
-	check_eq(destination_view.accepted_color_keys, state.get_destination(&"station_a").accepted_color_keys, "accepted keys forwarded")
-	check_eq(destination_view.capacity, 2, "station capacity forwarded")
-	check_eq(destination_view.occupancy, 0, "station occupancy starts at zero")
-	check_eq(destination_view.queue_color_keys, [&"COLOR_A"], "queued item colors forwarded in FIFO order")
-	check_eq(destination_view.cell, Vector2i(3, 0), "station anchor cell from metadata")
-	check_eq(destination_view.footprint, Vector2i(2, 1), "station anchor footprint from metadata")
-
-	var item_view: Variant = adapter.build_item_view(state.get_item(&"p1"))
-	check_eq(item_view.id, &"p1", "item view id")
-	check_eq(item_view.item_type, &"passenger_standard", "item view type")
-
-	var staging_view: Variant = adapter.build_staging_view(state)
-	check_eq(staging_view.slot_count, 2, "staging view slot count")
-	check_eq(staging_view.pressure, &"normal", "staging view pressure")
-	check_eq(staging_view.occupants.size(), 2, "staging view occupant rows")
-
-	var progress := adapter.build_progress_snapshot(state)
-	check_eq(int(progress["queued_passengers"]), 1, "progress snapshot item count")
-	check_eq(int(progress["staging_slots"]), 2, "progress snapshot slot count")
-	check_eq(String(progress["fail_reason"]), "", "progress snapshot has no failure yet")
+	var staging_simulation := TrafficGameFactory.build(_unserved_level(1))
+	if staging_simulation == null:
+		check(false, "staging level builds")
+		return
+	var staging_result := staging_simulation.execute(DispatchEntityCommand.new(&"v1"))
+	var staging_entries := TrafficEventMap.translate_result(staging_result)
+	var staging_entry: Dictionary = {}
+	for entry in staging_entries:
+		if entry["name"] == &"staging_changed":
+			staging_entry = entry
+	check(not staging_entry.is_empty(), "staging_changed forwarded with the official name")
+	check_eq(staging_entry["payload"].get("pressure"), "full", "staging_changed payload carries derived pressure")
+	var staging_view: Variant = adapter.build_staging_view(staging_simulation.get_state())
+	check_eq(staging_view.pressure, &"full", "staging projection reports authoritative pressure")
+	check_eq(staging_view.slot_count, 1, "staging projection reports arbitrary slot count")
+	check(staging_view.occupant_at(0) != null, "staging projection exposes the staged entity")
+	var progress := adapter.build_progress_snapshot(staging_simulation.get_state())
 	check(Serialization.is_primitive_tree(progress), "progress snapshot stays primitive")
 
+	var before := staging_simulation.snapshot()
+	adapter.build_board_view(staging_simulation.get_state())
+	adapter.build_entity_view(entity)
+	adapter.build_staging_view(staging_simulation.get_state())
+	check(Serialization.values_equal(before, staging_simulation.snapshot()), "adapter projection never mutates simulation state")
 
-func _end_to_end_session_names() -> void:
-	var collector := Collector.new()
-	var built := _new_adapter(collector)
-	var adapter: Variant = built["adapter"]
 
-	# Session A: a completing dispatch.
-	var workspace := TrafficGameFactory.build(_level())
-	if workspace != null:
-		adapter.forward_result(workspace.execute(DispatchEntityCommand.new(&"v1")))
+# --- end-to-end ---------------------------------------------------------------
 
-	# Session B: blocked + rejected.
-	var blocked_level := _level()
-	blocked_level["paths"]["route_blocked"] = [{"x": 0, "y": 1}, {"x": 1, "y": 1}]
-	blocked_level["paths"]["route_free"] = [{"x": 1, "y": 1}, {"x": 2, "y": 1}]
-	blocked_level["vehicles"].append({"id": "v2", "type": "van", "color": "COLOR_A", "capacity": 1,
+func _e2e_happy_path_with_turn() -> void:
+	var wired := _wire(_turning_path_level())
+	if wired.is_empty():
+		return
+	var simulation: Simulation = wired["simulation"]
+	var presenter: Variant = wired["presenter"]
+	var recorder: Recorder = wired["recorder"]
+	var adapter: TrafficPresentationAdapter = wired["adapter"]
+
+	var objective_events: Array = []
+	presenter.objective_presented.connect(func(id: StringName) -> void: objective_events.append(id))
+
+	var result := _dispatch(wired, &"v1")
+	check(result.is_success(), "happy-path dispatch succeeds")
+
+	# Official vocabulary end to end (no provisional names).
+	check(recorder.has(&"entity_move_started"), "presenter received entity_move_started")
+	check(recorder.has(&"entity_moved"), "presenter received entity_moved")
+	check(recorder.has(&"item_loaded"), "presenter received item_loaded")
+	check(recorder.has(&"match_occurred"), "presenter received match_occurred")
+	check(recorder.has(&"entity_completed"), "presenter received entity_completed")
+	check(recorder.has(&"objective_completed"), "presenter received objective_completed")
+	check(recorder.has(&"game_completed"), "presenter received game_completed")
+	check(not recorder.has(&"EntityArrived"), "no provisional PascalCase name reached the router")
+	var non_official: Array[String] = []
+	for name in recorder.names:
+		if not Router.ALL_EVENTS.has(name):
+			non_official.append(String(name))
+	check(non_official.is_empty(), "every forwarded event uses the official vocabulary (%s)" % ", ".join(non_official))
+
+	# Movement started: bounded lock, animation active, entity still on board.
+	var view: Node2D = presenter.board_view.entity_view(&"v1")
+	check(view != null, "entity view exists during movement")
+	check(presenter.is_input_locked(), "movement acquired the input lock")
+	check(presenter.input_lock_remaining() <= Presenter.RESULT_LOCK_CAP + 0.0001, "every presentation lock is bounded")
+	var start_center: Vector2 = presenter.board_view.cell_center(Vector2i(0, 0))
+	check(view.position.distance_to(start_center) < 0.5, "no visual snap-back before the animation advances")
+
+	# Hooks run synchronously with the (real) completion outcome.
+	check(_has_effect(presenter), "match/loading hook spawned a match effect")
+	check_eq(objective_events.size(), 1, "objective hook fired once")
+	check_eq(presenter.active_sequence(), &"win", "win hook ran immediately (simulation completion is not delayed)")
+	check(simulation.get_state().is_won(), "simulation is authoritative: level won")
+
+	# The animation follows the supplied path (a straight line would stay close
+	# to the start->target segment).
+	var target_center: Vector2 = presenter.board_view.cell_center(Vector2i(2, 2))
+	var cell_px: float = presenter.board_view.cell_center(Vector2i(1, 0)).distance_to(start_center)
+	var max_off_segment := 0.0
+	for step in 60:
+		presenter.advance(0.02)
+		var moving_view: Node2D = presenter.board_view.entity_view(&"v1")
+		if moving_view == null:
+			break
+		max_off_segment = maxf(max_off_segment, _distance_to_segment(moving_view.position, start_center, target_center))
+	check(max_off_segment > cell_px * 0.25, "presentation follows the supplied path, not a straight line")
+
+	# Visual lifecycle: the completed entity left the board once movement ended.
+	check(presenter.board_view.entity_view(&"v1") == null, "completed entity removed after its animation finished")
+
+	# Bounded locks: after the cosmetic sequences expire nothing stays locked.
+	for step in 5:
+		presenter.advance(1.0)
+	check(not presenter.is_input_locked(), "all presentation locks released after the bounded sequences")
+
+	# Authoritative synchronization after the command.
+	var updated: int = adapter.sync_authoritative_state(simulation.get_state(), presenter)
+	check_eq(updated, 1, "authoritative sync updated the destination")
+	var destination_view: Node2D = presenter.board_view.destination_view(&"station_a")
+	check(destination_view != null, "destination view exists after sync")
+	if destination_view != null:
+		check_eq(destination_view.queue_size(), 0, "authoritative queue drained in presentation")
+	check_eq(presenter.staging_view.pressure(), TW_PRESSURE_NORMAL, "staging pressure synchronized")
+	presenter.teardown()
+	presenter.free()
+
+
+const TW_PRESSURE_NORMAL := &"normal"
+
+
+func _has_effect(presenter: Variant) -> bool:
+	for child: Node in presenter.effects_layer.get_children():
+		if child.get_script() == MatchEffect:
+			return true
+	return false
+
+
+func _e2e_staging_path() -> void:
+	var wired := _wire(_unserved_level(1))
+	if wired.is_empty():
+		return
+	var simulation: Simulation = wired["simulation"]
+	var presenter: Variant = wired["presenter"]
+	var recorder: Recorder = wired["recorder"]
+	var adapter: TrafficPresentationAdapter = wired["adapter"]
+
+	_dispatch(wired, &"v1")
+	check(recorder.has(&"staging_changed"), "presenter received staging_changed")
+	check_eq(recorder.last_payload(&"staging_changed").get("action"), "added", "staging action forwarded")
+	check_eq(recorder.last_payload(&"staging_changed").get("pressure"), "full", "pressure forwarded with the staging event")
+	check_eq(presenter.staging_view.pressure(), &"full", "presentation reflects staging pressure")
+	check(recorder.has(&"game_failed"), "presenter received game_failed (no valid moves)")
+	check_eq(recorder.last_payload(&"game_failed").get("fail_reason"), "no_valid_moves", "fail reason forwarded from the simulation")
+	check_eq(presenter.active_sequence(), &"fail", "fail hook ran")
+	check(simulation.get_state().is_lost(), "simulation is authoritative: level lost")
+	check(presenter.board_view.entity_view(&"v1") != null, "staged entity remains visible while its animation runs")
+
+	presenter.advance(1.0)
+	check(presenter.board_view.entity_view(&"v1") == null, "staged entity left the board after its animation finished")
+	var updated: int = adapter.sync_authoritative_state(simulation.get_state(), presenter)
+	check_eq(updated, 1, "authoritative sync ran for the staging level")
+	var staging_data: Variant = presenter.staging_view.get_staging_data()
+	check(staging_data != null, "presentation holds authoritative staging data")
+	if staging_data != null:
+		check_eq(staging_data.slot_count, 1, "authoritative slot count applied")
+		check(staging_data.occupant_at(0) != null, "authoritative staging occupant applied")
+	check_eq(presenter.staging_view.pressure(), &"full", "authoritative pressure applied after sync")
+	var destination_view: Node2D = presenter.board_view.destination_view(&"station_a")
+	check(destination_view != null and destination_view.queue_size() == 0, "authoritative empty queue applied after sync")
+	presenter.teardown()
+	presenter.free()
+
+
+func _e2e_failure_localization() -> void:
+	# no_valid_moves (single unserved vehicle).
+	var single := _wire(_unserved_level(2))
+	if not single.is_empty():
+		var single_presenter: Variant = single["presenter"]
+		var single_recorder: Recorder = single["recorder"]
+		_dispatch(single, &"v1")
+		check_eq(single_recorder.last_payload(&"game_failed").get("fail_reason"), "no_valid_moves", "no_valid_moves reached presentation")
+		check_eq(
+			single_presenter.fail_reason_localization_key(&"no_valid_moves"),
+			&"level.fail.no_moves",
+			"no_valid_moves maps to its localization key through the real presenter"
+		)
+		single_presenter.teardown()
+		single_presenter.free()
+
+	# staging_full (one slot, two unserved vehicles).
+	var definition := _unserved_level(1)
+	definition["vehicles"].append({"id": "v2", "type": "van", "color": "COLOR_A", "capacity": 1,
 		"footprint": {"width": 1, "height": 1},
-		"cell": {"x": 0, "y": 1}, "route": "route_blocked", "station": "station_a"})
-	blocked_level["vehicles"].append({"id": "v3", "type": "van", "color": "COLOR_A", "capacity": 1,
+		"cell": {"x": 3, "y": 1}, "route": "route_v2", "station": "station_a"})
+	var full := _wire(definition)
+	if full.is_empty():
+		return
+	var presenter: Variant = full["presenter"]
+	var recorder: Recorder = full["recorder"]
+	var simulation: Simulation = full["simulation"]
+	_dispatch(full, &"v1")
+	check_eq(simulation.get_state().is_lost(), false, "level continues while a valid move remains")
+	check_eq(simulation.get_state().staging.occupied_count(), 1, "first unserved vehicle staged")
+	_dispatch(full, &"v2")
+	check_eq(recorder.last_payload(&"game_failed").get("fail_reason"), "staging_full", "staging_full reached presentation")
+	check_eq(
+		presenter.fail_reason_localization_key(&"staging_full"),
+		&"level.fail.staging_full",
+		"staging_full maps to its localization key through the real presenter"
+	)
+	check_eq(presenter.active_sequence(), &"fail", "staging_full runs the fail sequence")
+	presenter.teardown()
+	presenter.free()
+
+
+func _unit_orientation_degrees() -> void:
+	var wired := _wire(_turning_path_level())
+	if wired.is_empty():
+		return
+	var simulation: Simulation = wired["simulation"]
+	var adapter: TrafficPresentationAdapter = wired["adapter"]
+	var presenter: Variant = wired["presenter"]
+	var entity: Entity = simulation.get_state().get_entity(&"v1")
+
+	entity.orientation = Direction.Value.EAST
+	var east: Variant = adapter.build_entity_view(entity)
+	check_eq(east.orientation, 90.0, "EAST projects as 90 degrees")
+	entity.orientation = Direction.Value.WEST
+	var west: Variant = adapter.build_entity_view(entity)
+	check_eq(west.orientation, 270.0, "WEST projects as 270 degrees")
+	check_eq(TrafficTheme.DIRECTION_DEGREES[&"east"], 90.0, "presentation theme documents 90 degrees for east")
+	check_eq(TrafficTheme.DIRECTION_DEGREES[&"west"], 270.0, "presentation theme documents 270 degrees for west")
+
+	presenter.show_entity(west)
+	var view: Node2D = presenter.board_view.entity_view(&"v1")
+	check(view != null, "entity view created for orientation check")
+	if view != null:
+		check_eq(view.rotation_degrees, 270.0, "presentation applies degrees directly")
+	presenter.teardown()
+	presenter.free()
+
+
+func _e2e_movement_synchronization() -> void:
+	var presenter: Variant = Presenter.new()
+	presenter.build()
+	presenter.layout_for(Vector2(1080, 1920))
+	presenter.setup(null)
+
+	presenter.handle_event(Router.ENTITY_PLACED, {
+		"entity_id": "e1",
+		"position": {"x": 0, "y": 0},
 		"footprint": {"width": 1, "height": 1},
-		"cell": {"x": 1, "y": 1}, "route": "route_free", "station": "station_a"})
-	var blocked_simulation := TrafficGameFactory.build(blocked_level)
-	if blocked_simulation == null:
-		check(false, "blocked session level builds")
-	else:
-		adapter.forward_result(blocked_simulation.execute(DispatchEntityCommand.new(&"v2")))
-		adapter.forward_result(blocked_simulation.execute(DispatchEntityCommand.new(&"ghost")))
+	}, Callable())
+	presenter.handle_event(Router.ENTITY_MOVE_STARTED, {
+		"entity_id": "e1",
+		"from": {"x": 0, "y": 0},
+		"to": {"x": 2, "y": 0},
+		"path": [{"x": 0, "y": 0}, {"x": 1, "y": 0}, {"x": 2, "y": 0}],
+	}, Callable())
+	# Arrival arrives synchronously, with no animation time in between.
+	presenter.handle_event(Router.ENTITY_MOVED, {
+		"entity_id": "e1",
+		"from": {"x": 0, "y": 0},
+		"to": {"x": 2, "y": 0},
+		"path": [{"x": 0, "y": 0}, {"x": 1, "y": 0}, {"x": 2, "y": 0}],
+	}, Callable())
 
-	var staging_level := _level()
-	staging_level["queues"]["q_a"] = []
-	staging_level["passengers"] = []
-	var staging_simulation := TrafficGameFactory.build(staging_level)
-	if staging_simulation != null:
-		adapter.forward_result(staging_simulation.execute(DispatchEntityCommand.new(&"v1")))
+	var start_center: Vector2 = presenter.board_view.cell_center(Vector2i(0, 0))
+	var target_center: Vector2 = presenter.board_view.cell_center(Vector2i(2, 0))
+	var view: Node2D = presenter.board_view.entity_view(&"e1")
+	check(view != null, "moving entity view exists")
+	if view != null:
+		check(view.position.distance_to(start_center) < 0.5, "no backwards snap when entity_moved arrives mid-animation")
+		check_eq(view.get_data().cell, Vector2i(0, 0), "logical cell is not moved ahead of the animation")
+	check(presenter.is_input_locked(), "movement lock still held while animating")
+	check(presenter.input_lock_remaining() <= Presenter.MOVE_LOCK_CAP + 0.0001, "movement lock remains bounded")
 
-	# Placement (produced by commands, not by level setup) and rejection.
-	adapter.forward_result(CommandResult.success([
-		DomainEvent.entity_placed(&"v9", GridPosition.new(1, 1), Footprint.new(1, 1)),
-	]))
+	presenter.advance(1.0)
+	var settled: Node2D = presenter.board_view.entity_view(&"e1")
+	check(settled != null, "entity view survives the animation")
+	if settled != null:
+		check(settled.position.distance_to(target_center) < 0.5, "authoritative target wins when the animation completes")
+		check_eq(settled.get_data().cell, Vector2i(2, 0), "logical cell matches the authoritative target")
+	check(not presenter.is_input_locked(), "movement lock released after completion")
 
-	var names := collector.names()
-	# StagingChanged (the removal action) is not emitted by M2 rules (nothing
-	# un-stages an entity yet); its mapping is covered by _translation_payloads.
-	var expected: Array[StringName] = [
-		&"EntityPlaced", &"EntityMoveStarted", &"EntityArrived", &"EntityBlocked",
-		&"CommandRejected", &"EntityExited", &"ItemLoaded", &"MatchOccurred",
-		&"StagingReceived", &"StagingPressureChanged",
-		&"ObjectiveCompleted", &"LevelCompleted", &"LevelFailed",
-	]
-	var missing: Array[String] = []
-	for name in expected:
-		if not names.has(name):
-			missing.append(String(name))
-	check(missing.is_empty(), "end-to-end session covers every runtime presentation event (%s)" % ", ".join(missing))
+	# An arrival for an entity with no active movement snaps immediately.
+	presenter.handle_event(Router.ENTITY_PLACED, {
+		"entity_id": "e2",
+		"position": {"x": 0, "y": 1},
+		"footprint": {"width": 1, "height": 1},
+	}, Callable())
+	presenter.handle_event(Router.ENTITY_MOVED, {
+		"entity_id": "e2",
+		"from": {"x": 0, "y": 1},
+		"to": {"x": 3, "y": 1},
+	}, Callable())
+	var idle_view: Node2D = presenter.board_view.entity_view(&"e2")
+	check(idle_view != null and idle_view.get_data().cell == Vector2i(3, 1), "idle arrivals still snap to the authoritative target")
+
+	# Unknown M2 proposal names stay safely ignorable.
+	check(not presenter.handle_event(Router.M2_EXPECTED_EVENTS[0], {}), "superseded proposal name remains ignored")
+	check(not presenter.handle_event(&"totally_unknown_event", {}), "unknown events remain ignored")
+	presenter.teardown()
+	presenter.free()

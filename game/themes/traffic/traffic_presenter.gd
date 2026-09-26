@@ -14,9 +14,22 @@ extends Control
 ##   JSON-safe event payloads, so the AGENT-1 adapter bridges domain events in.
 ## - It never mutates simulation state and never blocks the simulation.
 ##
-## M2 additive events (item_loaded, match_occurred, staging_changed,
-## objective_completed, game_completed, game_failed) are exposed as
-## presentation hooks; unknown events are ignored safely.
+## M2 additive events (entity_completed, item_loaded, match_occurred,
+## staging_changed, objective_completed, game_completed, game_failed) are
+## consumed through [method handle_event] and mapped onto the presentation
+## hooks; unknown events are ignored safely.
+##
+## Movement sequencing (INTEGRATION CONTRACT): the simulation emits
+## `entity_move_started` and `entity_moved` back-to-back synchronously. The
+## presenter therefore
+## - starts the cosmetic tween on `entity_move_started` (using the official
+##   `path` payload when supplied, falling back to `[from, to]`),
+## - never snaps backwards when `entity_moved` arrives during an active move
+##   (the authoritative target is recorded and applied when the tween ends),
+## - defers the visual removal of a completed/staged entity until its cosmetic
+##   movement finishes, so an active tween is never cut,
+## - keeps the movement lock bounded by [constant MOVE_LOCK_CAP].
+## Simulation state is always authoritative and is never delayed.
 
 const BoardData := preload("res://themes/traffic/model_board_view_data.gd")
 const EntityData := preload("res://themes/traffic/model_entity_view_data.gd")
@@ -72,6 +85,8 @@ var _movement_active := false
 var _movement_has_target := false
 var _movement_entity_id: StringName = &""
 var _movement_target_cell := Vector2i.ZERO
+## Entities whose view must leave the board after their movement finishes.
+var _pending_removals: Array[StringName] = []
 var _active_effect: Node2D = null
 var _active_sequence: StringName = &""
 var _blocker_ids: Array[StringName] = []
@@ -197,7 +212,9 @@ func animate_path(entity_id: StringName, path_cells: Array, max_duration: float 
 	var duration: float = _movement_controller.move_along(view, points, max_duration)
 	_movement_active = duration > 0.0
 	if _movement_active:
-		input_gate.request(LOCK_OWNER_MOVE, &"move_animation", duration)
+		# Movement lock stays bounded by MOVE_LOCK_CAP regardless of the tween
+		# duration; the controller already clamps to its own MAX_DURATION.
+		input_gate.request(LOCK_OWNER_MOVE, &"move_animation", minf(duration, MOVE_LOCK_CAP))
 	return duration
 
 
@@ -364,15 +381,27 @@ func handle_event(event_type: StringName, payload: Dictionary, entity_provider: 
 			return true
 		RouterScript.ENTITY_MOVE_STARTED:
 			var started_id := RouterScript.payload_entity_id(payload)
-			animate_path(started_id, [
-				RouterScript.payload_position(payload, "from"),
-				RouterScript.payload_position(payload, "to"),
-			])
+			# Official payload may carry the full logical path; fall back to
+			# [from, to] for older/plain payloads.
+			var path_cells := RouterScript.payload_positions(payload, "path")
+			if path_cells.is_empty():
+				path_cells = [
+					RouterScript.payload_position(payload, "from"),
+					RouterScript.payload_position(payload, "to"),
+				]
+			animate_path(started_id, path_cells)
 			return true
 		RouterScript.ENTITY_MOVED:
 			var moved_id := RouterScript.payload_entity_id(payload)
-			board_view.move_entity_to(moved_id, RouterScript.payload_position(payload, "to"))
-			_release_move_lock()
+			var moved_to := RouterScript.payload_position(payload, "to")
+			if _movement_active and _movement_entity_id == moved_id:
+				# The authoritative target wins, but never by snapping backwards
+				# mid-animation: the tween finishes and then settles on it.
+				_movement_target_cell = moved_to
+				_movement_has_target = true
+			else:
+				board_view.move_entity_to(moved_id, moved_to)
+				_release_move_lock()
 			return true
 		RouterScript.ENTITY_BLOCKED:
 			var blocked_id := RouterScript.payload_entity_id(payload)
@@ -386,14 +415,53 @@ func handle_event(event_type: StringName, payload: Dictionary, entity_provider: 
 				RouterScript.payload_code(payload)
 			)
 			return true
+		RouterScript.ENTITY_COMPLETED:
+			# Visual lifecycle: the completed entity leaves the board once its
+			# cosmetic movement is done (never cutting an active tween).
+			_defer_or_remove(RouterScript.payload_entity_id(payload))
+			return true
+		RouterScript.ITEM_LOADED:
+			show_item_loaded(
+				StringName(RouterScript.payload_string(payload, "destination_id")),
+				StringName(RouterScript.payload_string(payload, "color_key"))
+			)
+			return true
+		RouterScript.MATCH_OCCURRED:
+			show_match(
+				RouterScript.payload_entity_id(payload),
+				StringName(RouterScript.payload_string(payload, "color_key"))
+			)
+			return true
+		RouterScript.STAGING_CHANGED:
+			var staged_id := RouterScript.payload_entity_id(payload)
+			var slot_count := RouterScript.payload_int(payload, "slot_count", 0)
+			if staging_view.get_staging_data() == null and slot_count > 0:
+				# Render the authoritative slot count supplied by the event; the
+				# adapter's authoritative sync later supplies full occupant data.
+				staging_view.set_staging_data(StagingData.new(slot_count))
+			if RouterScript.payload_string(payload, "action") == "added":
+				_defer_or_remove(staged_id)
+			var pressure := RouterScript.payload_string(payload, "pressure")
+			if pressure != "":
+				set_staging_pressure(StringName(pressure))
+			return true
+		RouterScript.OBJECTIVE_COMPLETED:
+			show_objective_complete(StringName(RouterScript.payload_string(payload, "objective_id")))
+			return true
+		RouterScript.GAME_COMPLETED:
+			show_win()
+			return true
+		RouterScript.GAME_FAILED:
+			show_fail(StringName(RouterScript.payload_string(payload, "fail_reason")))
+			return true
 		_:
 			event_ignored.emit(event_type)
 			return false
 
 
-## Subscribes the presenter to a router's official M1 events.
+## Subscribes the presenter to a router's official events (M1 + additive M2).
 func bind_router(router_instance: RouterScript, entity_provider: Callable = Callable()) -> void:
-	for event_type in RouterScript.M1_EVENTS:
+	for event_type in RouterScript.ALL_EVENTS:
 		router_instance.subscribe(
 			event_type,
 			func(name: StringName, payload: Dictionary) -> void:
@@ -441,6 +509,7 @@ func teardown() -> void:
 	_active_sequence = &""
 	_blocker_ids.clear()
 	_blocker_flash_remaining = 0.0
+	_pending_removals.clear()
 	for child: Node in get_children():
 		remove_child(child)
 		child.free()
@@ -484,13 +553,37 @@ func _axis_toward(entity_id: StringName, target: Vector2i) -> Vector2:
 
 
 func _on_movement_finished(_target: Variant = null) -> void:
-	if _movement_has_target:
+	var settled_id := _movement_entity_id
+	if _movement_has_target and not _pending_removals.has(settled_id):
 		# Correct harmless visual drift to the authoritative supplied target.
-		board_view.move_entity_to(_movement_entity_id, _movement_target_cell)
-		_movement_has_target = false
+		board_view.move_entity_to(settled_id, _movement_target_cell)
+	_movement_has_target = false
 	_movement_entity_id = &""
 	_movement_active = false
 	_release_move_lock()
+	_flush_pending_removals()
+
+
+## Removes an entity view immediately, or after its cosmetic movement finishes
+## when a tween is active for it (an active animation is never cut).
+func _defer_or_remove(entity_id: StringName) -> void:
+	if entity_id == &"":
+		return
+	if _movement_active and _movement_entity_id == entity_id:
+		if not _pending_removals.has(entity_id):
+			_pending_removals.append(entity_id)
+		return
+	_pending_removals.erase(entity_id)
+	remove_entity(entity_id)
+
+
+func _flush_pending_removals() -> void:
+	if _pending_removals.is_empty():
+		return
+	var pending := _pending_removals.duplicate()
+	_pending_removals.clear()
+	for entity_id: StringName in pending:
+		remove_entity(entity_id)
 
 
 func _release_move_lock() -> void:

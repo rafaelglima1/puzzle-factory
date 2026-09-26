@@ -16,6 +16,17 @@ extends RefCounted
 ## events and projects state into view data, and never validates moves,
 ## changes matching/staging/enumeration, grants rewards or waits for
 ## animation. Callers keep ownership of the simulation.
+##
+## Contract notes (integration remediation, M2):
+## - ONE event vocabulary: official snake_case names only. `forward_result()`
+##   dispatches the official names and never renames them.
+## - `entity_move_started` presentation payloads are enriched with the official
+##   `path` taken from the matching `entity_moved` (presentation copy only).
+## - `orientation` is in DEGREES (Traffic `traffic_theme.DIRECTION_DEGREES`):
+##   north 0, east 90, south 180, west 270.
+## - `bind_presenter()` wires the real router to the real presenter, and
+##   `sync_authoritative_state()` refreshes presentation from authoritative
+##   simulation state after a command (presentation computes no puzzle rules).
 
 const ROUTER_SCRIPT := preload("res://themes/traffic/bridge/presentation_event_router.gd")
 const ENTITY_VIEW_SCRIPT := preload("res://themes/traffic/model_entity_view_data.gd")
@@ -24,12 +35,13 @@ const DESTINATION_VIEW_SCRIPT := preload("res://themes/traffic/model_destination
 const STAGING_VIEW_SCRIPT := preload("res://themes/traffic/model_staging_view_data.gd")
 const BOARD_VIEW_SCRIPT := preload("res://themes/traffic/model_board_view_data.gd")
 
-## Documented orientation mapping: Direction value -> radians for presentation.
-const ORIENTATION_RADIANS := {
+## Documented orientation mapping: Direction value -> DEGREES, matching
+## `game/themes/traffic/traffic_theme.gd` DIRECTION_DEGREES.
+const ORIENTATION_DEGREES := {
 	Direction.Value.NORTH: 0.0,
-	Direction.Value.EAST: PI / 2.0,
-	Direction.Value.SOUTH: PI,
-	Direction.Value.WEST: -PI / 2.0,
+	Direction.Value.EAST: 90.0,
+	Direction.Value.SOUTH: 180.0,
+	Direction.Value.WEST: 270.0,
 }
 
 ## Presentation event router (AGENT-2 contract); created by default.
@@ -42,20 +54,51 @@ func _init(p_router: Variant = null) -> void:
 	router = p_router if p_router != null else ROUTER_SCRIPT.new()
 
 
-## Forwards a command result's events to presentation; returns the number of
-## presentation events dispatched, and counts unmapped events as ignored.
+## Forwards a command result's events to presentation using the official event
+## vocabulary (enriched presentation payloads, never renamed). Returns the
+## number of presentation events dispatched; unmapped events are counted as
+## ignored and are never forwarded.
 func forward_result(result: CommandResult) -> int:
-	var dispatched := 0
 	if result == null:
 		return 0
+	var dispatched := 0
+	for entry in TrafficEventMap.translate_result(result):
+		_dispatch(StringName(entry["name"]), entry["payload"])
+		dispatched += 1
 	for event in result.events:
 		if not TrafficEventMap.is_mapped(event.event_type):
 			ignored_event_count += 1
-			continue
-		for entry in TrafficEventMap.translate(event):
-			_dispatch(str(entry["name"]), entry["payload"])
-			dispatched += 1
 	return dispatched
+
+
+## Wires the adapter's router to a presentation target (presentation presenter).
+## Production-compatible binding used by the game layer and by cross-layer tests.
+func bind_presenter(presenter: Variant, entity_provider: Callable = Callable()) -> bool:
+	if router == null or presenter == null or not presenter.has_method("bind_router"):
+		return false
+	presenter.call("bind_router", router, entity_provider)
+	return true
+
+
+## Refreshes presentation from authoritative simulation state using only the
+## presenter's public setters. Presentation renders what the simulation says;
+## it never computes FIFO, matching, capacity or game-over rules.
+## Returns the number of destinations updated.
+func sync_authoritative_state(state: GameState, presenter: Variant) -> int:
+	if state == null or presenter == null:
+		return 0
+	var updated := 0
+	if presenter.has_method("set_destination") and presenter.has_method("set_queue"):
+		for destination_id in state.destination_ids():
+			var destination: Destination = state.destinations[destination_id]
+			presenter.call("set_destination", build_destination_view(destination, state))
+			presenter.call("set_queue", destination.id, _queue_color_keys(destination, state))
+			updated += 1
+	if presenter.has_method("set_staging"):
+		presenter.call("set_staging", build_staging_view(state))
+	if presenter.has_method("set_staging_pressure"):
+		presenter.call("set_staging_pressure", TrafficEventMap.pressure_for(state.staging.occupied_count(), state.staging.slot_count))
+	return updated
 
 
 func _dispatch(name: StringName, payload: Dictionary) -> void:
@@ -81,7 +124,7 @@ func build_entity_view(entity: Entity) -> Variant:
 	var view: Variant = ENTITY_VIEW_SCRIPT.new(entity.id, entity.entity_type, entity.color_key)
 	view.footprint = Vector2i(entity.footprint.width, entity.footprint.height)
 	view.cell = _cell_of(entity)
-	view.orientation = ORIENTATION_RADIANS.get(entity.orientation, 0.0)
+	view.orientation = ORIENTATION_DEGREES.get(entity.orientation, 0.0)
 	view.state = EntityState.to_string_name(entity.state)
 	view.metadata = Serialization.canonicalize(entity.metadata)
 	return view

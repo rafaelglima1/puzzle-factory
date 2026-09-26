@@ -6,6 +6,33 @@ versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed — M2 cross-integration (simulation ↔ traffic presentation)
+
+- One official snake_case event vocabulary end to end: `TrafficEventMap` no
+  longer renames domain events into the obsolete PascalCase proposal names and
+  instead forwards the official names, enriching presentation payloads only
+  (`entity_move_started.path`, `staging_changed.pressure`).
+- `TrafficPresenter.bind_router()` now subscribes the additive M2 events
+  (`entity_completed`, `item_loaded`, `match_occurred`, `staging_changed`,
+  `objective_completed`, `game_completed`, `game_failed`) and maps them onto
+  the presentation hooks; unknown events stay safely ignorable.
+- Movement sequencing fixed: no backwards snap when `entity_moved` arrives
+  during an active tween (authoritative target applied when it ends), the full
+  logical `path` is used for interpolation, completed/staged entity views are
+  removed only after their animation finishes, and the movement lock stays
+  bounded by `MOVE_LOCK_CAP`.
+- Orientation is projected in degrees (north 0 / east 90 / south 180 /
+  west 270) to match the Traffic DTO and theme.
+- Fail reasons use the simulation's canonical lowercase ids (`staging_full`,
+  `no_valid_moves`); uppercase aliases remain accepted for compatibility.
+- Added `TrafficPresentationAdapter.bind_presenter()` and
+  `sync_authoritative_state()` — authoritative destination occupancy/queue,
+  staging occupancy and staging pressure refresh for the caller/M3 layer.
+- Replaced the self-consistent mock-router assertions with real cross-layer
+  tests (`traffic_integration_test.gd`) covering the happy path with a turning
+  path, staging, both failure reasons, orientation and movement
+  synchronization.
+
 ### Added — M2 Traffic Gameplay (simulation)
 
 - Generic puzzle mechanics under `game/core/`:

@@ -1,70 +1,65 @@
 class_name TrafficEventMap
 extends RefCounted
-## Maps generic domain events to the Traffic presentation vocabulary.
-##
 ## PRODUCT INTEGRATION LAYER (Traffic) — OWNER: AGENT-1.
 ##
-## Presentation names prefer the provisional names published by AGENT-2 in
-## `game/themes/traffic/bridge/presentation_event_router.gd`
-## (`PROVISIONAL_EVENTS`, from docs/UX_IMPLEMENTATION_PLAN.md §2.2). Where no
-## provisional name exists, an adapter-side name is used (documented below).
-## The router treats names as data and ignores unknown ones safely, so this
-## table can evolve without breaking presentation.
+## There is exactly ONE event vocabulary: the official snake_case domain event
+## names from `docs/PRESENTATION_BRIDGE.md` (contract version 1, additively
+## extended in M2). This layer forwards them **unchanged** and must never
+## rename them into a second, competing (provisional) vocabulary — the AGENT-2
+## router/presenter consumes the official names directly.
 ##
-## Mapping (generic -> presentation):
-##   entity_placed       -> EntityPlaced        (adapter-side; no proposal)
-##   entity_move_started -> EntityMoveStarted   (proposal)
-##   entity_moved        -> EntityArrived       (proposal; payload adds `path`)
-##   entity_blocked      -> EntityBlocked       (proposal)
-##   command_rejected    -> CommandRejected     (adapter-side; proposal maps statuses)
-##   entity_completed    -> EntityExited        (proposal; entity left the board)
-##   item_loaded         -> ItemLoaded          (proposal)
-##   match_occurred      -> MatchOccurred       (proposal)
-##   staging_changed     -> StagingReceived / StagingChanged + StagingPressureChanged
-##   objective_completed -> ObjectiveCompleted  (proposal)
-##   game_completed      -> LevelCompleted      (proposal)
-##   game_failed         -> LevelFailed         (proposal; payload carries fail_reason)
+## What this layer does add is presentation-side ENRICHMENT. It never mutates a
+## DomainEvent and never mutates simulation state; it only builds a payload
+## copy:
+## - `entity_move_started` gains `path` (copied from the matching `entity_moved`
+##   in the same command result) so presentation can interpolate the real route
+##   instead of a straight line, with `[from, to]` as fallback.
+## - `staging_changed` gains `pressure` (`normal` / `warning` / `full`) derived
+##   from the authoritative occupancy counts.
 ##
-## The translation is pure (no state access, no decisions) and preserves the
-## generic payload verbatim, adding only derived presentation values such as
-## staging pressure. Unknown event types translate to nothing.
+## Unknown event types produce no entry and stay safely ignorable.
 
-const NAMES := {
-	DomainEvent.ENTITY_PLACED: &"EntityPlaced",
-	DomainEvent.ENTITY_MOVE_STARTED: &"EntityMoveStarted",
-	DomainEvent.ENTITY_MOVED: &"EntityArrived",
-	DomainEvent.ENTITY_BLOCKED: &"EntityBlocked",
-	DomainEvent.COMMAND_REJECTED: &"CommandRejected",
-	DomainEvent.ENTITY_COMPLETED: &"EntityExited",
-	DomainEvent.ITEM_LOADED: &"ItemLoaded",
-	DomainEvent.MATCH_OCCURRED: &"MatchOccurred",
-	DomainEvent.OBJECTIVE_COMPLETED: &"ObjectiveCompleted",
-	DomainEvent.GAME_COMPLETED: &"LevelCompleted",
-	DomainEvent.GAME_FAILED: &"LevelFailed",
-}
-
-const NAME_STAGING_RECEIVED := &"StagingReceived"
-const NAME_STAGING_CHANGED := &"StagingChanged"
-const NAME_STAGING_PRESSURE := &"StagingPressureChanged"
-
-## Pressure labels match the AGENT-2 staging view-data constants.
 const PRESSURE_NORMAL := &"normal"
 const PRESSURE_WARNING := &"warning"
 const PRESSURE_FULL := &"full"
 
+## Official vocabulary: domain event -> official presentation name (identity).
+## Kept explicit so tests can assert that no rename is introduced.
+const OFFICIAL_NAMES := {
+	DomainEvent.ENTITY_PLACED: &"entity_placed",
+	DomainEvent.ENTITY_MOVE_STARTED: &"entity_move_started",
+	DomainEvent.ENTITY_MOVED: &"entity_moved",
+	DomainEvent.ENTITY_BLOCKED: &"entity_blocked",
+	DomainEvent.COMMAND_REJECTED: &"command_rejected",
+	DomainEvent.ENTITY_COMPLETED: &"entity_completed",
+	DomainEvent.ITEM_LOADED: &"item_loaded",
+	DomainEvent.MATCH_OCCURRED: &"match_occurred",
+	DomainEvent.STAGING_CHANGED: &"staging_changed",
+	DomainEvent.OBJECTIVE_COMPLETED: &"objective_completed",
+	DomainEvent.GAME_COMPLETED: &"game_completed",
+	DomainEvent.GAME_FAILED: &"game_failed",
+}
+
 
 static func is_mapped(event_type: StringName) -> bool:
-	return event_type == DomainEvent.STAGING_CHANGED or NAMES.has(event_type)
+	return OFFICIAL_NAMES.has(event_type)
 
 
-## Returns the presentation name for a generic event type (&"" when unmapped).
+## Official presentation name for a domain event type (&"" when unknown).
 static func presentation_name(event_type: StringName) -> StringName:
-	if event_type == DomainEvent.STAGING_CHANGED:
-		return NAME_STAGING_CHANGED
-	return NAMES.get(event_type, &"")
+	return OFFICIAL_NAMES.get(event_type, &"")
 
 
-## Deterministic staging pressure from occupancy.
+## Official vocabulary as a sorted list (used by tests and diagnostics).
+static func official_names() -> Array[StringName]:
+	var names: Array[StringName] = []
+	for event_type in OFFICIAL_NAMES:
+		names.append(OFFICIAL_NAMES[event_type])
+	names.sort_custom(func(a, b): return String(a) < String(b))
+	return names
+
+
+## Deterministic staging pressure from authoritative occupancy counts.
 static func pressure_for(occupied_count: int, slot_count: int) -> StringName:
 	if slot_count <= 0 or occupied_count >= slot_count:
 		return PRESSURE_FULL
@@ -74,44 +69,46 @@ static func pressure_for(occupied_count: int, slot_count: int) -> StringName:
 	return PRESSURE_NORMAL
 
 
-## Translates one event into 0..2 presentation entries, each
-## { "name": StringName, "payload": Dictionary }.
+## Translates ONE event into 0..1 entries, each
+## `{ "name": StringName, "payload": Dictionary }`, using the official name.
 static func translate(event: DomainEvent) -> Array[Dictionary]:
 	var entries: Array[Dictionary] = []
 	if event == null:
 		return entries
+	var name: StringName = OFFICIAL_NAMES.get(event.event_type, &"")
+	if name == &"":
+		return entries
 	var payload: Dictionary = Serialization.canonicalize(event.data)
-
-	match event.event_type:
-		DomainEvent.STAGING_CHANGED:
-			var action := str(payload.get("action", ""))
-			var staging_payload := payload.duplicate(true)
-			var name: StringName = NAME_STAGING_RECEIVED if action == DomainEvent.STAGING_ADDED else NAME_STAGING_CHANGED
-			entries.append({"name": name, "payload": staging_payload})
-			var occupied := int(payload.get("occupied_count", 0))
-			var slot_count := int(payload.get("slot_count", 0))
-			entries.append({
-				"name": NAME_STAGING_PRESSURE,
-				"payload": {
-					"occupied_count": occupied,
-					"slot_count": slot_count,
-					"available_slots": int(payload.get("available_slots", 0)),
-					"pressure": String(pressure_for(occupied, slot_count)),
-				},
-			})
-		_:
-			var name: StringName = NAMES.get(event.event_type, &"")
-			if name == &"":
-				return entries
-			entries.append({"name": name, "payload": payload})
+	if event.event_type == DomainEvent.STAGING_CHANGED:
+		var occupied := int(payload.get("occupied_count", 0))
+		var slot_count := int(payload.get("slot_count", 0))
+		payload["pressure"] = String(pressure_for(occupied, slot_count))
+	entries.append({"name": name, "payload": payload})
 	return entries
 
 
-## Translates every event of a command result, in emission order.
+## Translates a whole command result in emission order, enriching
+## `entity_move_started` with the path of the matching `entity_moved`.
 static func translate_result(result: CommandResult) -> Array[Dictionary]:
 	var entries: Array[Dictionary] = []
 	if result == null:
 		return entries
+
+	# Index authoritative paths by entity id (deterministic: first occurrence).
+	var paths := {}
 	for event in result.events:
-		entries.append_array(translate(event))
+		if event.event_type != DomainEvent.ENTITY_MOVED:
+			continue
+		var entity_id := str(event.data.get("entity_id", ""))
+		var path: Variant = event.data.get("path", [])
+		if typeof(path) == TYPE_ARRAY and not (path as Array).is_empty():
+			paths[entity_id] = path
+
+	for event in result.events:
+		for entry in translate(event):
+			if event.event_type == DomainEvent.ENTITY_MOVE_STARTED:
+				var started_id := str(entry["payload"].get("entity_id", ""))
+				if paths.has(started_id):
+					entry["payload"]["path"] = paths[started_id]
+			entries.append(entry)
 	return entries

@@ -28,8 +28,45 @@ const M1_EVENTS: Array[StringName] = [
 	COMMAND_REJECTED,
 ]
 
-## Additive event names M2 may publish. Documentation only: NOT authoritative
-## and NOT used to gate dispatch. Unknown events must always remain harmless.
+## Additive M2 vocabulary (official snake_case names, published by M2).
+const ENTITY_COMPLETED := &"entity_completed"
+const ITEM_LOADED := &"item_loaded"
+const MATCH_OCCURRED := &"match_occurred"
+const STAGING_CHANGED := &"staging_changed"
+const OBJECTIVE_COMPLETED := &"objective_completed"
+const GAME_COMPLETED := &"game_completed"
+const GAME_FAILED := &"game_failed"
+
+const M2_EVENTS: Array[StringName] = [
+	ENTITY_COMPLETED,
+	ITEM_LOADED,
+	MATCH_OCCURRED,
+	STAGING_CHANGED,
+	OBJECTIVE_COMPLETED,
+	GAME_COMPLETED,
+	GAME_FAILED,
+]
+
+## Every official event the presenter can consume (M1 + M2 additive).
+const ALL_EVENTS: Array[StringName] = [
+	ENTITY_PLACED,
+	ENTITY_MOVE_STARTED,
+	ENTITY_MOVED,
+	ENTITY_BLOCKED,
+	COMMAND_REJECTED,
+	ENTITY_COMPLETED,
+	ITEM_LOADED,
+	MATCH_OCCURRED,
+	STAGING_CHANGED,
+	OBJECTIVE_COMPLETED,
+	GAME_COMPLETED,
+	GAME_FAILED,
+]
+
+## Superseded early proposal list kept for documentation only. These names were
+## never published by the simulation (`entity_arrived` was a proposal; the
+## official arrival event is `entity_moved`). NOT authoritative and never used
+## to gate dispatch — unknown events must always remain harmless.
 const M2_EXPECTED_EVENTS: Array[StringName] = [
 	&"entity_arrived",
 	&"item_loaded",
@@ -171,3 +208,31 @@ static func payload_status(payload: Dictionary) -> StringName:
 
 static func payload_code(payload: Dictionary) -> StringName:
 	return StringName(str(payload.get("code", "")))
+
+
+## Reads a plain string payload field (&"" when absent).
+static func payload_string(payload: Dictionary, key: String) -> String:
+	return str(payload.get(key, ""))
+
+
+## Reads a plain int payload field.
+static func payload_int(payload: Dictionary, key: String, default_value: int = 0) -> int:
+	var value: Variant = payload.get(key, null)
+	if typeof(value) == TYPE_INT:
+		return value
+	if typeof(value) == TYPE_FLOAT:
+		return int(value)
+	return default_value
+
+
+## Reads a list of `{ "x": int, "y": int }` cells (e.g. `entity_moved.path`).
+## Unknown/malformed entries are skipped; returns [] when absent.
+static func payload_positions(payload: Dictionary, key: String) -> Array[Vector2i]:
+	var cells: Array[Vector2i] = []
+	var value: Variant = payload.get(key, null)
+	if typeof(value) != TYPE_ARRAY:
+		return cells
+	for entry: Variant in value:
+		if entry is Dictionary:
+			cells.append(Vector2i(int(entry.get("x", 0)), int(entry.get("y", 0))))
+	return cells

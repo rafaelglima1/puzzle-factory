@@ -187,6 +187,44 @@ scripts/run_tests.ps1
 ## 13. Explicitly NOT implemented
 
 Gameplay/board/occupancy/validation/matching/queue/capacity/staging/win/lose
-logic, commands, `game/integration/traffic/**`, M3 menus/result flow, save,
-progression, coins, boosters, solver, generator, Firebase, AdMob, IAP, Remote
-Config, and any `project.godot` change.
+logic, commands, M3 menus/result flow, save, progression, coins, boosters,
+solver, generator, Firebase, AdMob, IAP, Remote Config, and any
+`project.godot` change. The M2 simulation and its Traffic product adapter live
+in `game/integration/traffic/**` (AGENT-1 owned) — see section 14.
+
+## 14. M2 integration alignment (AGENT-1 adapter)
+
+The M2 cross-integration remediation aligned simulation and presentation on a
+single contract:
+
+- **One event vocabulary.** The presenter/router consume the official
+  snake_case names (`entity_placed`, `entity_move_started`, `entity_moved`,
+  `entity_blocked`, `command_rejected`, `entity_completed`, `item_loaded`,
+  `match_occurred`, `staging_changed`, `objective_completed`, `game_completed`,
+  `game_failed`). The provisional PascalCase proposal names are obsolete.
+  `bind_router()` subscribes `Router.ALL_EVENTS` (M1 + M2).
+- **Full path.** `entity_move_started` presentation payloads are enriched with
+  the official `path` from the matching `entity_moved`, and the presenter uses
+  it for interpolation (falling back to `[from, to]`).
+- **Sequencing.** `entity_moved` arriving during an active tween no longer
+  snaps backwards or releases the lock early: the authoritative target is
+  applied when the tween ends, and the movement lock stays bounded by
+  `MOVE_LOCK_CAP`.
+- **Visual lifecycle.** `entity_completed` and `staging_changed(action=added)`
+  remove the entity view only after its movement finishes, so an active
+  animation is never cut.
+- **Orientation.** The adapter projects `orientation` in **degrees**
+  (north 0, east 90, south 180, west 270), matching
+  `traffic_theme.DIRECTION_DEGREES` and `EntityView.orientation_degrees`.
+- **Fail reasons.** Canonical machine ids are the simulation's lowercase ids
+  (`staging_full`, `no_valid_moves`); the failure effect maps them to
+  `level.fail.*` keys and still accepts the uppercase aliases.
+- **Authoritative sync.** `TrafficPresentationAdapter.sync_authoritative_state()`
+  refreshes destination occupancy/queue, staging occupancy and staging pressure
+  through the presenter's public setters after a command. Presentation performs
+  no FIFO, matching, capacity or game-over computation.
+- **Real cross-layer tests.** `game/tests/traffic_integration_test.gd` wires
+  `TrafficGameFactory -> Simulation -> DispatchEntityCommand ->
+  TrafficPresentationAdapter -> PresentationEventRouter -> TrafficPresenter`
+  (happy path with a turning path, staging, both failure reasons, orientation
+  and movement synchronization).

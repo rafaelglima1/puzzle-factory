@@ -135,39 +135,59 @@ internals (ADR-013).
 
 ## 8. Traffic adapter (product integration layer)
 
-`game/integration/traffic/**` (AGENT-1) translates generic output into the
-AGENT-2 contract:
+`game/integration/traffic/**` (AGENT-1) is the single translation point. There
+is **one** event vocabulary: the official snake_case names above. The adapter
+never renames an official event — the earlier PascalCase proposal vocabulary
+(`EntityArrived`, `LevelCompleted`, `StagingReceived`, …) is obsolete and must
+not reappear anywhere.
 
-| Generic event | Presentation name | Notes |
+What the adapter adds is presentation-side **enrichment of the payload copy**
+(it never mutates a `DomainEvent` or simulation state):
+
+| Official event | Enrichment | Notes |
 |---|---|---|
-| `entity_placed` | `EntityPlaced` | adapter-side name (no proposal) |
-| `entity_move_started` | `EntityMoveStarted` | proposal |
-| `entity_moved` | `EntityArrived` | payload carries `path` for interpolation |
-| `entity_blocked` | `EntityBlocked` | proposal |
-| `command_rejected` | `CommandRejected` | adapter-side name |
-| `item_loaded` | `ItemLoaded` | proposal |
-| `match_occurred` | `MatchOccurred` | proposal |
-| `entity_completed` | `EntityExited` | completed entity left the board |
-| `staging_changed` (added) | `StagingReceived` + `StagingPressureChanged` | pressure derived (`normal`/`warning`/`full`) |
-| `staging_changed` (removed) | `StagingChanged` + `StagingPressureChanged` | removal not emitted in M2 |
-| `objective_completed` | `ObjectiveCompleted` | proposal |
-| `game_completed` | `LevelCompleted` | proposal |
-| `game_failed` | `LevelFailed` | payload carries `fail_reason` |
+| `entity_move_started` | `path` (array of `{x, y}` cells) | copied from the matching `entity_moved` in the same result so presentation interpolates the real route; falls back to `[from, to]` |
+| `staging_changed` | `pressure` (`normal` / `warning` / `full`) | derived from the authoritative `occupied_count` / `slot_count` |
+
+`entity_moved` keeps its official `path` field unchanged, so the presenter can
+consume either event.
 
 Adapter API (`TrafficPresentationAdapter`):
 
 ```gdscript
-var adapter := TrafficPresentationAdapter.new()          # owns a router
+var adapter := TrafficPresentationAdapter.new()      # owns the real router
+adapter.bind_presenter(presenter)                    # presenter.bind_router(router)
 adapter.forward_result(simulation.execute(DispatchEntityCommand.new(&"v1")))
-adapter.build_board_view(state)          # state -> AGENT-2 board DTO
-adapter.build_staging_view(state)        # slots + occupants + pressure
-adapter.build_entity_view(entity)        # cell/footprint Vector2i, orientation radians
+adapter.sync_authoritative_state(state, presenter)   # authoritative refresh
+adapter.build_board_view(state)      # state -> AGENT-2 board DTO
+adapter.build_staging_view(state)    # slots + occupants + pressure
+adapter.build_entity_view(entity)    # cell/footprint Vector2i, orientation in DEGREES
 adapter.build_destination_view(destination, state)
 adapter.build_progress_snapshot(state)   # primitive HUD counters
 ```
 
-The adapter is read-only for simulation state (tested) and counts unmapped
-events instead of failing.
+Rules enforced by the cross-layer tests (`game/tests/traffic_integration_test.gd`):
+
+- the adapter dispatches only official names (checked against
+  `PresentationContract` and the router's `ALL_EVENTS`), and no PascalCase name
+  reaches the router;
+- forwarding and projection are read-only for simulation state;
+- `sync_authoritative_state()` refreshes destination occupancy/queue, staging
+  occupancy and staging pressure using only the presenter's public setters —
+  presentation never computes FIFO, matching, capacity or game-over rules;
+- orientation is projected in **degrees** (north 0, east 90, south 180, west
+  270), matching `traffic_theme.DIRECTION_DEGREES`;
+- fail reasons keep the simulation's canonical lowercase machine ids
+  (`staging_full`, `no_valid_moves`); presentation maps them to localization
+  keys and still tolerates the older uppercase aliases.
+
+Presentation-side movement contract (implemented in `traffic_presenter.gd`):
+because `entity_move_started` and `entity_moved` are emitted back-to-back
+synchronously, presentation animates from `entity_move_started` (using the full
+`path`), never snaps backwards when `entity_moved` arrives mid-animation (the
+authoritative target is applied when the tween ends), defers the visual removal
+of completed/staged entities until their movement finishes, and keeps the
+movement lock bounded by `MOVE_LOCK_CAP`.
 
 ## 9. Code entry points
 
@@ -188,5 +208,6 @@ events instead of failing.
 ## 10. Not implemented yet
 
 Score/combo events (M4), booster/undo events (M11), analytics emission (M12),
-state-hash exposure (M6), obstacles/level metadata (M5), `StagingChanged`
-removal path (M11).
+state-hash exposure (M6), obstacles/level metadata (M5), the
+`staging_changed(action="removed")` path (M11 — nothing un-stages an entity in
+M2).

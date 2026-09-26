@@ -10,6 +10,13 @@ const DEFAULT_DURATION := 1.0
 const SKIP_AFTER := 0.3
 
 const REASON_KEYS := {
+	# Canonical machine-readable ids from the simulation (lowercase).
+	&"staging_full": &"level.fail.staging_full",
+	&"no_valid_moves": &"level.fail.no_moves",
+	&"move_limit_exceeded": &"level.fail.move_limit",
+	&"time_limit_exceeded": &"level.fail.time_limit",
+	&"special_objective_failed": &"level.fail.special",
+	# Uppercase aliases kept for older callers/tests. Lowercase is authoritative.
 	&"STAGING_FULL": &"level.fail.staging_full",
 	&"NO_VALID_MOVES": &"level.fail.no_moves",
 	&"MOVE_LIMIT_EXCEEDED": &"level.fail.move_limit",
@@ -66,11 +73,16 @@ func reason_localization_key() -> StringName:
 	return localization_key_for(reason)
 
 
-## Maps a machine `fail_reason` to a localization key. Unknown reasons fall
+## Maps a machine `fail_reason` to a localization key. The canonical ids are the
+## simulation's lowercase machine ids (`staging_full`, `no_valid_moves`);
+## uppercase aliases remain accepted for compatibility. Unknown reasons fall
 ## back to a generic key; internal enum names are never surfaced to users.
 static func localization_key_for(fail_reason: StringName) -> StringName:
 	if REASON_KEYS.has(fail_reason):
 		return REASON_KEYS[fail_reason]
+	var lowered := StringName(String(fail_reason).to_lower())
+	if REASON_KEYS.has(lowered):
+		return REASON_KEYS[lowered]
 	return UNKNOWN_REASON_KEY
 
 
