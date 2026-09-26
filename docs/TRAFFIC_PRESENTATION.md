@@ -187,7 +187,7 @@ scripts/run_tests.ps1
 ## 13. Explicitly NOT implemented
 
 Gameplay/board/occupancy/validation/matching/queue/capacity/staging/win/lose
-logic, commands, M3 menus/result flow, save, progression, coins, boosters,
+logic, commands, save, progression, coins, boosters,
 solver, generator, Firebase, AdMob, IAP, Remote Config, and any
 `project.godot` change. The M2 simulation and its Traffic product adapter live
 in `game/integration/traffic/**` (AGENT-1 owned) — see section 14.
@@ -228,3 +228,64 @@ single contract:
   TrafficPresentationAdapter -> PresentationEventRouter -> TrafficPresenter`
   (happy path with a turning path, staging, both failure reasons, orientation
   and movement synchronization).
+
+## 15. M3 first-playable shell (AGENT-2)
+
+`game/themes/traffic/m3/**` adds the player-facing shell (presentation only).
+It never decides gameplay: it renders supplied state and emits player intents.
+
+```text
+m3_first_playable.gd + .tscn   orchestrator: states + intents + API
+main_menu_screen.gd            Project Traffic + PLAY (+ debug LEVEL SELECT)
+gameplay_screen.gd             board (TrafficPresenter) + Level/Restart/Menu
+result_screen.gd               win / fail overlay + NEXT/RETRY/MENU
+debug_level_select_screen.gd   10 entries; ZERO-BASED level_selected(index)
+m3_strings.gd                  temporary English key catalog (localization seam)
+m3_style.gd                    procedural style tokens/StyleBoxes (no assets)
+```
+
+**States:** `MAIN_MENU`, `PLAYING`, `WIN_RESULT`, `FAIL_RESULT`,
+`DEBUG_LEVEL_SELECT`.
+
+**Shared intent contract (signals):** `play_requested`,
+`entity_tapped(entity_id)`, `restart_requested`, `next_requested`,
+`menu_requested`, `debug_level_selected(level_index)` (zero-based).
+
+**Presentation API:** `show_main_menu()`, `show_playing(level_number,
+total_levels)`, `show_win_result(level_number, is_final_level)`,
+`show_fail_result(level_number, fail_reason)`, `show_debug_level_select(entries)`
+(returns false when debug is disabled), `set_progress(level_number,
+total_levels)`, `get_traffic_presenter()`.
+
+**Entity taps.** `BoardView.entity_at(point, min_touch)` performs a geometric,
+orientation-aware hit test over the entity views (short axis expanded to a
+reachable touch size; deterministic tie-break). `TrafficPresenter.
+entity_at_board_point()` forwards it and `GameplayScreen.handle_tap_at()`
+emits `entity_tapped` only when the presenter is neither input-locked nor
+mid-sequence. Presentation identifies *what* was tapped; the simulation decides
+whether the move is legal. Touch and mouse both work (400 ms de-dupe).
+
+**Result / fail copy.** `show_fail_result` maps the supplied machine reason
+through the failure effect to a `level.fail.*` key and resolves it with the
+temporary English catalog; raw reason names are never shown. Win shows
+`LEVEL COMPLETE` + NEXT/MENU, final level shows `ALL N LEVELS COMPLETE` + MENU,
+fail shows `TRY AGAIN` + RETRY/MENU. No rewards, coins, progression or revive.
+
+**Debug gating.** The level selector is only reachable while `debug_enabled`
+(default `OS.is_debug_build()`) is true, so editor/Debug exports expose it and
+release exports do not (blueprint §67/§68). No `project.godot` / boot-scene
+change is made here; the M3 integration pass switches app startup and supplies
+real session wiring.
+
+**Responsive.** Header is a separate `Style.HEADER_HEIGHT` band; the presenter
+is offset below it and re-laid-out, so board/staging keep their own margins.
+Reference 1080×1920, validated headlessly at 16:9, 20:9 and a tablet viewport
+(board/staging/header buttons/result panel/debug panel all inside the viewport).
+
+**Tests:** `game/tests/m3_first_playable_test.gd` (menu/play intent, level
+indicator, entity tap + empty tap + locked input, restart/next/menu intents,
+win/final/fail results, debug selector zero-based + gating, responsive).
+
+Not implemented in M3 (M4+): production juice, new audio/haptics systems,
+settings persistence, transitions framework, final particles, coins, boosters,
+ads, IAP, daily rewards, analytics, store SDKs.

@@ -80,6 +80,52 @@ func cell_center(cell: Vector2i) -> Vector2:
 	return Vector2((float(cell.x) + 0.5) * cell_size, (float(cell.y) + 0.5) * cell_size)
 
 
+## Geometric hit-test for player input: returns the entity id whose view was
+## tapped at `point` (board-local coordinates), or &"" when none. Presentation
+## only: it identifies what the player touched; the simulation decides legality.
+## A short axis smaller than `min_touch` is expanded so tap targets stay
+## reachable, and ties are broken deterministically (real body before
+## expanded-only, nearest centre, topmost drawn, then id).
+func entity_at(point: Vector2, min_touch: float = 0.0) -> StringName:
+	var best_id: StringName = &""
+	var best_key: Array = []
+	for id: Variant in _entity_views.keys():
+		var view: Node2D = _entity_views[id]
+		if view == null or not is_instance_valid(view):
+			continue
+		var view_pos: Vector2 = view.position
+		var footprint: Vector2i = view.call(&"footprint")
+		var base_ext := Vector2(float(footprint.x), float(footprint.y)) * cell_size
+		var hit_ext := Vector2(maxf(base_ext.x, min_touch), maxf(base_ext.y, min_touch))
+		var local: Vector2 = (point - view_pos).rotated(-view.rotation)
+		var in_body := absf(local.x) <= base_ext.x * 0.5 + 0.001 and absf(local.y) <= base_ext.y * 0.5 + 0.001
+		var in_touch := absf(local.x) <= hit_ext.x * 0.5 + 0.001 and absf(local.y) <= hit_ext.y * 0.5 + 0.001
+		if not in_touch:
+			continue
+		var key := [
+			0 if in_body else 1,
+			(point - view_pos).length_squared(),
+			-view.get_index(),
+			String(id),
+		]
+		if best_key.is_empty() or _key_less(key, best_key):
+			best_key = key
+			best_id = StringName(id)
+	return best_id
+
+
+func _key_less(left: Array, right: Array) -> bool:
+	for index in mini(left.size(), right.size()):
+		var a: Variant = left[index]
+		var b: Variant = right[index]
+		if a == b:
+			continue
+		if typeof(a) == TYPE_STRING or typeof(b) == TYPE_STRING:
+			return str(a) < str(b)
+		return float(a) < float(b)
+	return left.size() < right.size()
+
+
 ## Adds or updates one entity view from supplied presentation data.
 func add_or_update_entity(entity_data: EntityData) -> Node2D:
 	var view: Node2D = entity_view(entity_data.id)

@@ -189,6 +189,13 @@ func remove_entity(entity_id: StringName) -> bool:
 	return board_view.remove_entity(entity_id)
 
 
+## Board-local tap -> entity id (presentation-only hit test). It never decides
+## whether the entity can move; the simulation owns validity.
+func entity_at_board_point(point: Vector2, min_touch: float = 0.0) -> StringName:
+	_ensure_built()
+	return board_view.entity_at(point, min_touch)
+
+
 ## Interpolates along an externally supplied cell path. Never validates it.
 func animate_path(entity_id: StringName, path_cells: Array, max_duration: float = -1.0) -> float:
 	_ensure_built()
