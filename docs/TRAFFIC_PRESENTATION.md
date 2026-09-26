@@ -1,145 +1,192 @@
-# Traffic Presentation Scaffold (AGENT-2)
+# Traffic Presentation (AGENT-2)
 
 > **Owner:** AGENT-2 (GAME / UX)
-> **Status:** Scaffold — visual components only, not connected to simulation
-> **Source of truth:** `docs/MASTER_BLUEPRINT.md`; plan in `docs/UX_IMPLEMENTATION_PLAN.md`
-> **Milestone:** M2-preparation (self-contained; does not depend on AGENT-1 M1)
+> **Status:** M2 presentation integration — scaffold adapted to the official M1
+> event contract and M2 additive hooks prepared
+> **Source of truth:** `docs/MASTER_BLUEPRINT.md`; contract in
+> `docs/PRESENTATION_BRIDGE.md`; plan in `docs/UX_IMPLEMENTATION_PLAN.md`
+> **Baseline:** M0 + M1 core + Traffic Presentation Scaffold (integrated)
 
 ## 1. Purpose
 
-Reusable, original Traffic-theme presentation components, built before M1
-publishes the generic presentation bridge so integration is fast once the real
-event contract lands.
+Presentation-only Traffic components plus a composition root
+(`TrafficPresenter`) that the AGENT-1 Traffic product adapter
+(`game/integration/traffic/**`) drives. Nothing here decides puzzle
+correctness.
 
 **Hard boundaries honoured:**
 
-- No puzzle authority: no occupancy, move validation, blocking, matching,
-  staging, win/lose or command logic (blueprint §8.2, ADR-003).
-- No simulation imports: presentation never references `game/core`,
-  `game/puzzle`, `game/levels`, `game/solver`, `game/generator` (enforced by
-  `game/tests/presentation_boundary_test.gd`).
-- Procedural art only: no third-party or binary assets, so nothing is copied
-  (blueprint §3) and asset cost stays low.
+- No puzzle authority: no occupancy, path legality, matching, FIFO, capacity,
+  staging rules, win or loss logic (blueprint §8.2, ADR-003).
+- No simulation imports: presentation never references `game/core/**` or
+  `game/puzzle/**` (enforced by `game/tests/presentation_boundary_test.gd`).
+- Procedural art only: no third-party or binary assets (blueprint §3).
 
-## 2. Layout
+## 2. Official M1 contract alignment
+
+Presentation consumes the **official** M1 vocabulary from
+`docs/PRESENTATION_BRIDGE.md` (contract version 1). The provisional
+`EntitySelected`/`EntityArrived` names are gone — there is one pathway:
 
 ```text
-game/ui/
-  layout_fit.gd                 resolution-independent board fit (§62)
-  input_gate.gd                 bounded cosmetic input lock (§5.5)
-
-game/audio/
-  audio_contract.gd             bus + SFX id contract (§60)
-  presentation_audio.gd         facade; safe no-op without streams
-
-game/haptics/
-  haptic_service.gd             light / warning / success, cooldown + toggle (§61)
-
-game/themes/traffic/
-  traffic_palette.gd            ColorKey -> color + symbol (§14, §59)
-  model_*_view_data.gd          presentation DTOs (visual data only)
-  bridge/presentation_event_router.gd   thin adapter boundary (provisional names)
-  components/
-    symbol_glyph.gd             procedural circle/triangle/square/star
-    board_view.gd               grid surface, supplied dimensions + obstacles
-    entity_view.gd              compact / van / truck silhouettes + orientation
-    item_view.gd                passenger item token
-    destination_view.gd         station, accepted symbols, capacity, queue
-    staging_view.gd             arbitrary slot count + pressure state
-    staging_slot_view.gd        single slot
-    selection_indicator.gd      selection ring
-    blocked_indicator.gd        bounded shake <= 250 ms + blocker flash
-    movement_tween_controller.gd interpolates an externally supplied path
-    match_effect.gd             bounded match/loading burst
-    completion_effect.gd        bounded win sequence (<= 2 s, skippable)
-    failure_effect.gd           bounded fail sequence (<= 1.5 s, skippable)
-    hud_shell.gd / hud_chip.gd  HUD shell + color/symbol objective chips
-  dev/
-    mock_presentation_state.gd  DEV-ONLY mock view data
-    traffic_sandbox.gd/.tscn    responsive sandbox scene
+entity_placed, entity_move_started, entity_moved, entity_blocked, command_rejected
 ```
 
-## 3. Running the sandbox
+`presentation_event_router.gd` is presentation-side only. Because it must not
+import core, it consumes the plain `DomainEvent.to_dictionary()` shape
+(`{"type", "sequence", "data"}`) and exposes payload helpers:
 
-Not the production boot scene (`game/project.godot` is untouched).
+```text
+dispatch(event_type, payload)
+dispatch_domain_event({ "type", "sequence", "data" })
+payload_entity_id / payload_position / payload_footprint / payload_blockers /
+payload_status / payload_code
+```
 
-- Editor: open `game/themes/traffic/dev/traffic_sandbox.tscn` and Run Current Scene.
-- Headless check: `traffic_layout_test.gd` instantiates it, calls `build()`
-  and `layout_for(size)` — no viewport required.
-- Demo hooks for visual review: `demo_select`, `demo_block`, `demo_move`,
-  `demo_match`, `demo_win`, `demo_fail`, `set_staging_slots`,
-  `set_staging_pressure`.
+Unknown event types are counted and ignored safely. `M2_EXPECTED_EVENTS`
+(`entity_arrived`, `item_loaded`, `match_occurred`, `staging_changed`,
+`objective_completed`, `game_completed`, `game_failed`) is **documentation
+only** — not authoritative, not used to gate dispatch.
 
-## 4. Responsive contract
+### Event → presentation mapping
 
-- Reference `1080x1920` only; layout is computed, never hard-locked.
-- `LayoutFit.fit_board_rect(available, cells, margin, max_width)` keeps the
-  cell ratio, centres the board and caps width on tablets.
-- Targets: 16:9, 18:9, 19.5:9, 20:9, tablet. Safe areas are consumed by the
-  screens that host the shell at M3.
-- Touch targets / chips use `>= 48` logical px minimums.
+| Official event | Presentation response |
+|---|---|
+| `entity_placed` | create/update entity view (position, footprint, orientation, color key, symbol) |
+| `entity_move_started` | `animate_path` over the supplied `[from, to]`; bounded movement input lock |
+| `entity_moved` | snap view to authoritative `to`; release movement lock |
+| `entity_blocked` | bounded shake (≤250 ms), blocker highlight hook, `warning` haptic, blocked SFX |
+| `command_rejected` | subtle generic invalid feedback; status/code kept for Debug only, never shown to users |
 
-## 5. Accessibility
+`TrafficPresenter.handle_event(event_type, payload, entity_provider)` performs
+this mapping. M1 payloads carry no theme color/type, so an optional
+`entity_provider` callable supplies richer `TrafficEntityData`; without it the
+presenter synthesizes a neutral DTO from `position`/`footprint`. `bind_router`
+subscribes the presenter to a router.
 
-Every `ColorKey` resolves to **color + symbol** (`COLOR_A` circle, `COLOR_B`
-triangle, `COLOR_C` square, `COLOR_D` star). Unknown keys fall back to a
-neutral color and the circle symbol, so presentation never breaks. Symbols are
-drawn on vehicles, item tokens, destination badges and HUD chips; matching must
-remain playable with hue removed (blueprint §59).
+## 3. Presentation API (`traffic_presenter.gd`)
 
-## 6. Input lock safety
+```text
+setup(board), layout_for(viewport), set_objectives(keys)
 
-`PresentationInputGate` clamps every request to `max_lock`, tracks owner +
-reason, decrements via `tick(delta)` and **auto-releases** at zero. No
-animation-dependent indefinite lock is possible. Default cap 0.6 s; a caller
-may raise it (e.g. 2.0 s for result transitions) but never unbounded. It is
-presentation-only and never consulted by simulation.
+show_entity, set_entity_state, set_entity_selected, set_entity_blocked, remove_entity
+animate_path(id, cells, max_duration)
+show_blocked(id, axis, blocker_ids)
+show_command_rejected(id, status, code)
 
-## 7. Audio integration note (requires AGENT-1/integration)
+set_destination, remove_destination, set_queue
+set_staging, set_staging_pressure
 
-`audio_contract.gd` declares buses `Master / Music / SFX / UI` and the ten
-required SFX classes. The actual Godot **Audio Bus layout lives in
-`game/project.godot`**, which this scaffold must not modify. Required M4
-integration step (documented, not done here):
+show_item_loaded, show_match, show_objective_complete
+show_win, show_fail, skip_active_sequence, fail_reason_localization_key
 
-1. Add the bus layout (Master -> Music, SFX, UI) to `game/project.godot`.
-2. Register original/approved streams via `PresentationAudio.register_stream`.
-3. Route playback through pooled `AudioStreamPlayer`s on `bus_for(sfx)`.
+handle_event, bind_router, advance, is_input_locked, teardown
+```
 
-No copyrighted or third-party audio is included.
+All methods accept presentation DTOs or plain data. None queries the
+simulation, decides legality, calculates matching, or computes win/lose.
 
-## 8. Presentation bridge boundary
+## 4. Staging / queue / destination
 
-`presentation_event_router.gd` is a deliberate thin adapter: event names are
-**data** (`PROVISIONAL_EVENTS`, from `UX_IMPLEMENTATION_PLAN.md` §2.2), not a
-locked enum. Callers subscribe/dispatch; unknown events are ignored safely.
-When AGENT-1 publishes the M1 contract, only the producer side is re-pointed.
+- **Staging** accepts authoritative `slot_count`, occupants and
+  `normal`/`warning`/`full` state; renders 3/4/5/6+ slots responsively; never
+  computes fullness or triggers game-over.
+- **Queue** renders an externally supplied ordered key list (color + symbol);
+  no FIFO logic.
+- **Destination** displays accepted keys, capacity, occupancy and queue; no
+  matching rule.
 
-## 9. Debug
+## 5. Movement / loading / matching
 
-No production/debug build gating is implemented here (AGENT-1 owns it). The
-sandbox is a development-only scene under `dev/` and the boundary test asserts
-no reusable component references it.
+- `animate_path` interpolates an externally supplied ordered cell path or
+  `[from, to]`; it never pathfinds and never inspects occupancy. Duration is
+  clamped (≤0.6 s) and drives a bounded, owner-tagged input lock.
+- `show_match` / `show_item_loaded` are bounded procedural bursts with light
+  haptic + SFX hooks; interrupt-safe and presentation-only.
 
-## 10. Tests
+## 6. Win / fail
+
+- `show_win` → bounded completion effect (≤2 s), skippable, releases locks,
+  emits `sequence_finished(&"win")`. No reward, no progression, no navigation.
+- `show_fail(reason)` → bounded failure effect (≤1.5 s), skippable, emits
+  `sequence_finished(&"fail")`. Machine reasons (`STAGING_FULL`,
+  `NO_VALID_MOVES`, …) map to localization keys; raw enum names are never
+  surfaced. M3 owns the retry/result flow.
+
+## 7. Input lock safety
+
+`PresentationInputGate` is preserved: owner + reason, bounded duration, auto
+release via `tick`, manual `release`/`release_all`. Locks release on animation
+completion, on skip, on teardown, and on failsafe timeout. `TrafficPresenter`
+sets the gate cap to 2.0 s so result sequences fit while movement stays ≤0.6 s
+by explicit request. No lock depends on an event that might never arrive.
+
+## 8. Theme contract compatibility
+
+`traffic_theme.gd` binds the generic `ThemeContract`
+(`game/themes/base/**`, AGENT-1-owned) without modifying it:
+
+- manifest validated by `ThemeContract.validate_manifest` (empty errors);
+- all generic `PRESENTATION_SLOTS` bound by name;
+- palette keys (`COLOR_A`…) validated by `ThemeContract.is_valid_color_key`;
+- direction name → presentation degrees.
+
+No missing generic capability was required for M2. Richer manifest loading
+(audio/particle set ids) is deferred to the milestone that consumes it.
+
+## 9. Accessibility
+
+Every `ColorKey` remains symbol-backed: `COLOR_A` circle, `COLOR_B` triangle,
+`COLOR_C` square, `COLOR_D` star; unknown keys fall back to a neutral color and
+the circle. New queue/destination/staging/loading/match visuals all preserve
+the symbol redundancy, so matching never depends on hue alone (blueprint §59).
+
+## 10. Responsive sandbox
+
+`game/themes/traffic/dev/traffic_sandbox.tscn` (dev-only; not the boot scene)
+now demonstrates the M2 states through the presenter:
+
+```text
+entity placed / movement / blocked / command_rejected
+queue populated, destination update
+staging 3/4/5/6 slots, warning, full
+item loaded, match effect
+objective-complete flash
+win effect, fail STAGING_FULL, fail NO_VALID_MOVES
+```
+
+`layout_for(viewport)` is validated at 16:9 and 20:9 headlessly; the sandbox
+never becomes production startup.
+
+## 11. Audio integration note (integration-owned)
+
+`audio_contract.gd` declares the buses (`Master / Music / SFX / UI`) and the
+ten required SFX classes; `PresentationAudio` is a safe no-op without streams.
+The actual Audio Bus layout lives in `game/project.godot`
+(AGENT-1/integration-owned), so it is **documented, not modified** here.
+Required M4 step: add the bus layout, register original/approved streams,
+route playback through pooled players on `bus_for(sfx)`.
+
+## 12. Tests
 
 ```text
 scripts/run_tests.ps1
 ```
 
-New suites:
+- `game/tests/traffic_m2_presentation_test.gd` — official M1 event mapping,
+  placement, movement/settle/blocked, command rejection, unknown-event safety,
+  staging authoritative state (3/4/5/6), queue/destination, match/loading hooks,
+  win/fail bounded+skippable+lock-release, input-lock failsafe/teardown,
+  ThemeContract compatibility.
+- `game/tests/traffic_presentation_test.gd` — router official vocabulary and
+  payload helpers, plus the scaffold component tests.
+- `game/tests/presentation_boundary_test.gd` — no core/puzzle imports, no
+  binary assets, no dev-mock leakage in reusable components.
+- `game/tests/traffic_layout_test.gd` — aspect-ratio fit and sandbox build.
 
-- `game/tests/traffic_presentation_test.gd` — palette fallback, orientation,
-  selection, staging counts, item/destination, bounded blocked/movement/effects,
-  input gate failsafe, audio contract, haptics restraint, event router.
-- `game/tests/presentation_boundary_test.gd` — no simulation imports, no
-  binary/third-party assets, no mock leakage, sandbox present.
-- `game/tests/traffic_layout_test.gd` — aspect-ratio fit maths, board scaling,
-  staging recut, HUD chips, sandbox build.
+## 13. Explicitly NOT implemented
 
-## 11. Explicitly NOT implemented
-
-Gameplay, board/occupancy logic, move validation, blocking logic, commands,
-matching/staging/win/lose rules, levels, solver, generator, save, progression,
-coins, boosters, analytics, Firebase, Remote Config, AdMob, IAP, Android
-config, CI, and any `project.godot` change.
+Gameplay/board/occupancy/validation/matching/queue/capacity/staging/win/lose
+logic, commands, `game/integration/traffic/**`, M3 menus/result flow, save,
+progression, coins, boosters, solver, generator, Firebase, AdMob, IAP, Remote
+Config, and any `project.godot` change.

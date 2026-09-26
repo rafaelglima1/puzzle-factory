@@ -242,15 +242,26 @@ func _test_haptics_restraint() -> void:
 
 func _test_event_router_boundary() -> void:
 	var router = EventRouter.new()
-	check_eq(router.dispatch(&"EntitySelected"), 0, "event with no subscriber dispatches to nobody")
+	check_eq(router.dispatch(&"entity_placed"), 0, "event with no subscriber dispatches to nobody")
 	check_eq(router.ignored_count, 1, "unhandled event counted, not crashed")
 	var received: Array = []
 	var callback := func(name: StringName, payload: Dictionary) -> void:
 		received.append([name, payload])
-	check(router.subscribe(&"EntitySelected", callback), "subscribe accepted")
-	check_eq(router.dispatch(&"EntitySelected", {"id": &"e1"}), 1, "subscriber receives the event")
+	check(router.subscribe(EventRouter.ENTITY_PLACED, callback), "subscribe accepted")
+	check_eq(router.dispatch(EventRouter.ENTITY_PLACED, {"entity_id": "e1"}), 1, "subscriber receives the event")
 	check_eq(received.size(), 1, "callback invoked once")
-	check_eq(received[0][0], &"EntitySelected", "event name forwarded")
-	check(router.unsubscribe(&"EntitySelected", callback), "unsubscribe accepted")
-	check_eq(router.dispatch(&"EntitySelected"), 0, "no delivery after unsubscribe")
-	check(EventRouter.PROVISIONAL_EVENTS.size() >= 10, "provisional event names documented (not a locked enum)")
+	check_eq(received[0][0], EventRouter.ENTITY_PLACED, "event name forwarded")
+	check(router.unsubscribe(EventRouter.ENTITY_PLACED, callback), "unsubscribe accepted")
+	check_eq(router.dispatch(EventRouter.ENTITY_PLACED), 0, "no delivery after unsubscribe")
+	check_eq(EventRouter.M1_EVENTS.size(), 5, "official M1 event vocabulary declared")
+	check(EventRouter.M2_EXPECTED_EVENTS.size() >= 5, "additive M2 names documented (non-authoritative)")
+	check_eq(router.dispatch_domain_event({"type": "unknown_future_event", "sequence": 0, "data": {}}), 0, "unknown additive event ignored")
+	check_eq(
+		router.dispatch_domain_event({"type": "entity_move_started", "sequence": 0, "data": {"entity_id": "e1"}}),
+		0,
+		"domain event dictionary shape accepted without core import"
+	)
+	check(EventRouter.payload_position({"to": {"x": 3, "y": 4}}, "to") == Vector2i(3, 4), "position payload helper")
+	check(EventRouter.payload_footprint({"footprint": {"width": 2, "height": 1}}) == Vector2i(2, 1), "footprint payload helper")
+	check_eq(EventRouter.payload_entity_id({"entity_id": "e9"}), &"e9", "entity id payload helper")
+	check_eq(EventRouter.payload_blockers({"blockers": ["a", "b"]}), [&"a", &"b"], "blockers payload helper")

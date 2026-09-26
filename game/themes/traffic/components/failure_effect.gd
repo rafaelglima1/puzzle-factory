@@ -63,8 +63,14 @@ func skip() -> bool:
 
 
 func reason_localization_key() -> StringName:
-	if REASON_KEYS.has(reason):
-		return REASON_KEYS[reason]
+	return localization_key_for(reason)
+
+
+## Maps a machine `fail_reason` to a localization key. Unknown reasons fall
+## back to a generic key; internal enum names are never surfaced to users.
+static func localization_key_for(fail_reason: StringName) -> StringName:
+	if REASON_KEYS.has(fail_reason):
+		return REASON_KEYS[fail_reason]
 	return UNKNOWN_REASON_KEY
 
 

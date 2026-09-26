@@ -9,6 +9,7 @@ extends Control
 const ChipScript := preload("res://themes/traffic/components/hud_chip.gd")
 
 const TOP_BAR_HEIGHT := 88.0
+const OBJECTIVE_FLASH_DURATION := 0.9
 
 var level_label: Label = null
 var score_label: Label = null
@@ -16,6 +17,7 @@ var score_label: Label = null
 var _root: VBoxContainer = null
 var _chip_row: HBoxContainer = null
 var _chips: Array = []
+var _flash_remaining := 0.0
 
 
 func _init() -> void:
@@ -55,6 +57,32 @@ func chip_color_keys() -> Array:
 		if is_instance_valid(chip):
 			keys.append(chip.get_color_key())
 	return keys
+
+
+## Bounded objective-completion flash. Display only: it never evaluates
+## objectives (blueprint §8.2). Returns the bounded duration.
+func flash_objective(duration: float = OBJECTIVE_FLASH_DURATION) -> float:
+	_flash_remaining = clampf(duration, 0.1, 2.0)
+	_apply_flash()
+	return _flash_remaining
+
+
+func advance(delta: float) -> void:
+	if _flash_remaining <= 0.0:
+		return
+	_flash_remaining = maxf(_flash_remaining - delta, 0.0)
+	_apply_flash()
+
+
+func is_flashing() -> bool:
+	return _flash_remaining > 0.0
+
+
+func _apply_flash() -> void:
+	if _chip_row == null:
+		return
+	var strength := minf(_flash_remaining / OBJECTIVE_FLASH_DURATION, 1.0)
+	_chip_row.modulate = Color(1.0 + 0.35 * strength, 1.0 + 0.22 * strength, 1.0, 1.0)
 
 
 func _build() -> void:
