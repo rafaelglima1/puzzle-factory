@@ -6,6 +6,34 @@ versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — M1 Puzzle Core
+
+- Deterministic, theme-independent core under `game/core/`:
+  - `board/`: `Board` (authoritative occupancy, atomic
+    placement/movement, deterministic iteration), `BoardDimensions`,
+    `GridPosition`, `Footprint`, `Direction`.
+  - `entities/`: generic `Entity` model and `EntityState` transition graph.
+  - `state/`: `RandomSource` contract, `DeterministicRng` (engine-independent
+    ANSI-C LCG with serializable state), `GameState` (schema_version 1) and
+    canonical `Serialization` (sorted keys, JSON-safe, integral-float
+    normalization).
+  - `commands/`: `GameCommand`, `CommandContext`, `CommandResult`,
+    `DomainEvent`, `PlaceEntityCommand`, `MoveEntityCommand`.
+- `game/puzzle/simulation/simulation.gd`: headless `Simulation` facade
+  (rejected commands never mutate state, RNG committed only on success).
+- Presentation bridge: `SimulationEventQueue` + `PresentationContract`
+  (version 1) and `docs/PRESENTATION_BRIDGE.md` (event model, ordering
+  guarantee, payload conventions, rejection rule, extension policy).
+- Theme base contract: `game/themes/base/theme_contract.gd` (manifest
+  validation, presentation slot names, ColorKey format) — ownership
+  recorded (AGENT-1 base, AGENT-2 concrete themes).
+- Tests: `board_test`, `occupancy_test`, `entity_test`, `rng_test`,
+  `game_state_test`, `command_test`, `events_test`,
+  `presentation_bridge_test`, `architecture_test` (446 checks total).
+- ADR-012: synchronous domain event emission with a presentation-side queue.
+- Architecture guard: automated test preventing theme vocabulary,
+  presentation references or scene-tree usage in generic layers.
+
 ### Added — M0 Foundation
 
 - Repository structure per blueprint §7 (`game/`, `content/`, `tools/`,

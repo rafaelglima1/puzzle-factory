@@ -9,6 +9,7 @@ Status values: `Proposed` | `Accepted` | `Superseded`.
 | [ADR-003](ADR-003-simulation-presentation-separation.md) | Presentation separated from simulation | Accepted |
 | [ADR-006](ADR-006-offline-first-no-backend.md) | Offline-first, no custom backend | Accepted |
 | [ADR-011](ADR-011-godot-android-build-toolchain.md) | Use Godot's bundled Android build toolchain | Accepted |
+| [ADR-012](ADR-012-synchronous-domain-events.md) | Synchronous domain events + presentation-side queue | Accepted |
 
 Planned per blueprint §94, to be written when their systems are implemented
 (not speculative):
