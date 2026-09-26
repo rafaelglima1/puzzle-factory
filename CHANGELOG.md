@@ -31,6 +31,19 @@ versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   shell/controller with the proven sequences, unlock progression 1→10, final
   level terminal behaviour, plus a debug sweep of every level).
 
+### Fixed — result screen skipped by the winning tap (device)
+
+- On a phone the winning tap could land exactly where `NEXT`/`MENU` appear (the
+  vehicles sit at the same height as the result buttons) and Android also
+  delivers a synthetic mouse event for that same tap, which activated the button
+  that had just appeared under the finger — skipping the result (on device it
+  jumped a level or dropped to the main menu). `result_screen.gd` now ignores
+  player presses for a short window after the result is shown; the guard lives
+  at the intent boundary, so it holds regardless of how the event was routed.
+  Verified on a physical device (win → result stays → `NEXT` works after the
+  window). `m3_app_integration_test.gd` asserts a press during the guard does
+  not advance and that the same press works once the guard elapses.
+
 ### Fixed — M3 session progress resume
 
 - `TrafficFirstPlayableSession` now owns progress initialization: its

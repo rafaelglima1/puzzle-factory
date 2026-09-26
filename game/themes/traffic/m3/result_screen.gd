@@ -7,6 +7,16 @@ extends Control
 const Style := preload("res://themes/traffic/m3/m3_style.gd")
 const Strings := preload("res://themes/traffic/m3/m3_strings.gd")
 
+## The winning tap can land exactly where a result button appears (the vehicles
+## sit at the same height as NEXT/MENU on a phone). Android also delivers a
+## synthetic mouse event for that same tap, which would press the button that
+## just appeared under the finger and skip the result. Player presses arriving
+## right after the result is shown are therefore ignored. The guard lives at the
+## intent boundary, so it holds no matter how the event was routed.
+const INPUT_GUARD_MS := 350
+
+var _input_guard_until_msec := -1
+
 signal next_pressed
 signal retry_pressed
 signal menu_pressed
@@ -84,6 +94,7 @@ func show_win(level_number: int, is_final_level: bool, total_levels: int = 10) -
 	_menu.visible = true
 	visible = true
 	_refresh_layout()
+	_arm_input_guard()
 
 
 func show_fail(level_number: int, fail_message_key: StringName, total_levels: int = 10) -> void:
@@ -98,6 +109,16 @@ func show_fail(level_number: int, fail_message_key: StringName, total_levels: in
 	_menu.visible = true
 	visible = true
 	_refresh_layout()
+	_arm_input_guard()
+
+
+## True while a result press must still be ignored (see `INPUT_GUARD_MS`).
+func input_guard_active() -> bool:
+	return Time.get_ticks_msec() < _input_guard_until_msec
+
+
+func _arm_input_guard() -> void:
+	_input_guard_until_msec = Time.get_ticks_msec() + INPUT_GUARD_MS
 
 
 func press_next() -> void:
@@ -195,12 +216,18 @@ func _refresh_layout() -> void:
 
 
 func _on_next_pressed() -> void:
+	if input_guard_active():
+		return
 	next_pressed.emit()
 
 
 func _on_retry_pressed() -> void:
+	if input_guard_active():
+		return
 	retry_pressed.emit()
 
 
 func _on_menu_pressed() -> void:
+	if input_guard_active():
+		return
 	menu_pressed.emit()

@@ -31,7 +31,7 @@ func run() -> void:
 	_test_fail_and_retry_debug_level()
 	_test_restart_mid_level()
 	_test_menu_reentry_loop()
-	_test_synthetic_mouse_guard()
+	_test_result_input_guard()
 	_test_input_dedupe_one_command_per_tap()
 	_test_responsive_real_boards()
 
@@ -290,38 +290,39 @@ func _test_menu_reentry_loop() -> void:
 	_free_app(controller)
 
 
-# --- synthetic mouse guard (device-derived hardening) -------------------------
+# --- result input guard (device-derived hardening) ----------------------------
 
-## Android delivers a touch event and then a synthetic mouse event for the same
-## physical tap. When that tap changes the screen (a winning move shows the
-## result screen), the synthetic mouse event must not activate the control that
-## appeared under the finger. This was found on a physical device; the guard
-## lifecycle is asserted here and the real behaviour was re-verified on device.
-func _test_synthetic_mouse_guard() -> void:
+## The winning tap can land exactly where a result button appears, and Android
+## also delivers a synthetic mouse event for that same tap: without a guard it
+## presses the button that just appeared under the finger (on device this skipped
+## the result and jumped a level). Player presses arriving right after the result
+## is shown must therefore be ignored. This was found on a physical device; the
+## real behaviour was re-verified there.
+func _test_result_input_guard() -> void:
 	var controller := _make_app()
 	var shell: Node = _shell(controller)
-	var mouse := InputEventMouseButton.new()
-	mouse.button_index = MOUSE_BUTTON_LEFT
-	mouse.pressed = true
-
-	# Startup (show_main_menu) arms the guard; the first synthetic mouse event
-	# is consumed exactly once.
-	check_eq(shell.get("_swallow_next_mouse"), true, "startup arms the synthetic-mouse guard")
-	shell.call("_input", mouse)
-	check_eq(shell.get("_swallow_next_mouse"), false, "startup guard consumes one mouse event")
-
-	# A screen change arms it again.
+	var result: Node = shell.get("_result")
 	shell.call("press_play")
-	check_eq(shell.get("_swallow_next_mouse"), true, "screen change re-arms the guard")
-	shell.call("_input", mouse)
-	check_eq(shell.get("_swallow_next_mouse"), false, "next mouse event swallowed once")
+	_tap_vehicle(controller, &"v1")
+	check_eq(shell.call("state_name"), &"WIN_RESULT", "winning tap shows the result screen")
+	check_eq(result.call("input_guard_active"), true, "result ignores presses right after it is shown")
 
-	# Touch events themselves are never swallowed.
-	shell.call("press_menu")
-	var touch := InputEventScreenTouch.new()
-	touch.pressed = true
-	shell.call("_input", touch)
-	check_eq(shell.get("_swallow_next_mouse"), true, "touch events do not clear the mouse guard")
+	# A press arriving from the same physical tap (synthetic event) must not skip
+	# the result. Re-arm first so the assertion does not depend on elapsed time.
+	var next_button: Button = result.get_node("Panel/NextButton")
+	result.call("_arm_input_guard")
+	next_button.emit_signal("pressed")
+	check_eq(shell.call("state_name"), &"WIN_RESULT", "guarded press does not skip the result screen")
+
+	# Once the guard elapses the player can continue normally.
+	result.set("_input_guard_until_msec", -1)
+	next_button.emit_signal("pressed")
+	check_eq(shell.call("state_name"), &"PLAYING", "press after the guard advances normally")
+
+	# The fail screen is guarded the same way.
+	shell.call("show_fail_result", 8, &"staging_required")
+	check_eq(shell.call("state_name"), &"FAIL_RESULT", "fail screen is shown")
+	check_eq(result.call("input_guard_active"), true, "fail screen is guarded too")
 	_free_app(controller)
 
 
