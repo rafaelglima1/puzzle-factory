@@ -47,6 +47,7 @@ func run() -> void:
 	_no_scene_tree_usage()
 	_generic_layers_ignore_integration()
 	_integration_layer_is_product_specific()
+	_persistence_layer_is_product_free()
 
 
 func _collect_scripts() -> void:
@@ -130,3 +131,18 @@ func _contains_word(text: String, word: String) -> bool:
 	if pattern.compile("(?i)\\b%s\\b" % word) != OK:
 		return false
 	return pattern.search(text) != null
+
+
+## Persistence is generic infrastructure: product vocabulary belongs to the
+## integration/theme layers, so `game/persistence/**` must stay product-free
+## (M3 progress store included).
+func _persistence_layer_is_product_free() -> void:
+	var scripts := _collect_gd("res://persistence")
+	check(scripts.size() >= 1, "persistence layer present (%d scripts)" % scripts.size())
+	var violations: Array[String] = []
+	for path: String in scripts:
+		var text := FileAccess.get_file_as_string(path)
+		for term in FORBIDDEN_TERMS:
+			if _contains_word(text, term):
+				violations.append("%s contains '%s'" % [path, term])
+	check(violations.is_empty(), "persistence stays product-free (%s)" % ", ".join(violations))

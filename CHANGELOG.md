@@ -6,6 +6,29 @@ versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — M3 First Playable (AGENT-1: session, levels, basic save)
+
+- `TrafficFirstPlayableSession` (`game/integration/traffic/`): play/start/
+  restart/next/debug-select flow, entity dispatch with the M2
+  `forward_result` + `sync_authoritative_state` contract, terminal signals
+  (`level_started`, `level_restarted`, `level_won`, `level_failed`,
+  `progress_changed`, `campaign_finished`, `session_error`), presentation
+  binding with clean router lifecycle. UI contract documented in
+  `docs/M3_SESSION_CONTRACT.md`.
+- `M3LevelCatalogue`: ten original, deterministic, manually authored levels
+  (product data in the integration layer) using only M2 mechanics, validated
+  against `TrafficGameFactory`; each level has a scripted winning sequence
+  proven in tests (10/10 completable). M5 replaces the catalogue.
+- `M3ProgressStore` (`game/persistence/`): minimal offline progress persistence
+  (version, highest unlocked level, completed level ids, last selected level),
+  canonical JSON under `user://` with an injectable path, corruption-safe
+  defaults, no coins/economy/cloud/backup/migration (all M10).
+- Tests: catalogue integrity, 10/10 scripted solvability with determinism and
+  negative paths, progress store (defaults, unlock, idempotency, corruption,
+  clamping, atomic serialization), session flow (restart equivalence, next,
+  terminal level, debug select, blocked-dispatch atomicity, disposal without
+  leaks), plus a persistence architecture guard.
+
 ### Fixed — M2 cross-integration (simulation ↔ traffic presentation)
 
 - One official snake_case event vocabulary end to end: `TrafficEventMap` no

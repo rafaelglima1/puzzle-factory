@@ -111,6 +111,22 @@ compatibility, with `is_won()`/`is_lost()` aliases.
 - `traffic_presentation_adapter.gd` — forwards events to the AGENT-2 router and
   projects state into AGENT-2 view DTOs; read-only for simulation state.
 
+M3 adds, in the same layer:
+
+- `m3_level_catalogue.gd` — the ten hand-authored M3 levels as product data
+  (validated against `TrafficGameFactory`; M5 replaces it with the formal
+  LevelSchema/loader and moves data to `content/levels/`);
+- `traffic_first_playable_session.gd` — first-playable orchestration: owns the
+  current `Simulation`, level index, restart/next flow, progress updates,
+  presentation binding and the per-command `forward_result` +
+  `sync_authoritative_state` contract. It contains no layout, copy, juice,
+  coins, ads or boosters.
+
+Persistence (`game/persistence/m3_progress_store.gd`) is generic infrastructure
+(product-free, guarded by `architecture_test.gd`): one canonical JSON profile in
+`user://` with unlock/completion state, injectable path, corruption-safe
+defaults. M10 replaces it with the robust save/migration system.
+
 Station board anchors (cell/footprint) live in generic `Destination.metadata`
 as product composition data, so core stays agnostic while presentation gets
 what it needs.
@@ -160,16 +176,24 @@ Implemented:
   dispatch + arrival + win/lose rules, additive event catalog, Traffic product
   integration layer (factory + event map + presentation adapter), schema v2
   with v1 migration, architecture guards.
+- **M3 (AGENT-1 half):** `TrafficFirstPlayableSession` orchestration (play /
+  start / restart / next / debug select / dispatch + presentation binding and
+  authoritative sync), the ten-level `M3LevelCatalogue`
+  (`game/integration/traffic/`, product data — M5 replaces it), and
+  `M3ProgressStore` (`game/persistence/`, minimal unlock persistence under
+  `user://`). Contract for the UI shell: `docs/M3_SESSION_CONTRACT.md`.
+  The M3 presentation shell (menus, play flow, result screens, boot scene)
+  is AGENT-2's.
 
 Deferred:
 
 | Concern | Milestone |
 |---|---|
-| Main menu, play flow, HUD, result screens, level select | M3 |
+| M3 presentation shell: menu, play flow, HUD, result screens, level select surface, boot scene | M3 (AGENT-2) |
 | Juice/audio/haptics implementation, settings persistence | M4 |
-| Level schema/loader/validator/migrations, obstacles | M5 |
+| Level schema/loader/validator/migrations, obstacles; replaces the M3 catalogue | M5 |
 | Solver + state hashing, difficulty analyzer, generator | M6–M8 |
-| Progression/coins/save system | M10 |
+| Robust progression/coins/save/migration (replaces `M3ProgressStore`) | M10 |
 | Boosters / undo | M11 |
 | Analytics/remote config/monetization abstractions | M12–M14 |
 | Production signing, AAB release, Firebase credentials | M16 |
