@@ -83,7 +83,7 @@ func _test_sandbox_builds() -> void:
 	check(sandbox.board_view != null, "sandbox builds the board view")
 	check(sandbox.staging_view != null, "sandbox builds the staging view")
 	check(sandbox.hud_shell != null, "sandbox builds the HUD shell")
-	check(sandbox.get_node_or_null("BoardView") != null, "board view is present in the sandbox tree")
+	check(sandbox.get_node_or_null("Presenter/BoardView") != null, "board view is present in the sandbox tree")
 	check(sandbox.demo_select(&"e_compact_a"), "sandbox select hook works")
 	check(sandbox.demo_match(&"e_compact_a"), "sandbox match hook works")
 	sandbox.free()

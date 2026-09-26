@@ -1,38 +1,26 @@
 extends Control
 ## DEV-ONLY responsive presentation sandbox for the Traffic theme (AGENT-2).
 ##
-## Purpose: open this scene in the editor (or instantiate + call build() in a
-## headless check) to eyeball the scaffold: board, entity orientations,
-## color/symbol groups, staging sizes, destination, queue, HUD and the win/fail
-## effect hooks.
+## Demonstrates the M2 presentation API with presentation-only demo data:
+## entity placed / movement / blocked, queue + destination updates, staging
+## 3/4/5/6 slots (normal/warning/full), item loading, match effect, objective
+## flash, and the win / fail(STAGING_FULL, NO_VALID_MOVES) hooks.
 ##
-## It is NOT the production boot scene. `game/project.godot` startup is
-## intentionally untouched. It uses mock data from dev/ only.
+## It is NOT the production boot scene: `game/project.godot` startup is
+## intentionally untouched. Demo data lives under `dev/` only and reusable
+## presentation components never reference it.
 
+const PresenterScript := preload("res://themes/traffic/traffic_presenter.gd")
 const Mock := preload("res://themes/traffic/dev/mock_presentation_state.gd")
-const BoardViewScript := preload("res://themes/traffic/components/board_view.gd")
-const StagingViewScript := preload("res://themes/traffic/components/staging_view.gd")
-const HudShellScript := preload("res://themes/traffic/components/hud_shell.gd")
-const MatchEffectScript := preload("res://themes/traffic/components/match_effect.gd")
-const CompletionEffectScript := preload("res://themes/traffic/components/completion_effect.gd")
-const FailureEffectScript := preload("res://themes/traffic/components/failure_effect.gd")
-const MovementControllerScript := preload("res://themes/traffic/components/movement_tween_controller.gd")
-const BlockedIndicatorScript := preload("res://themes/traffic/components/blocked_indicator.gd")
-const PaletteScript := preload("res://themes/traffic/traffic_palette.gd")
+const EntityData := preload("res://themes/traffic/model_entity_view_data.gd")
+const StagingData := preload("res://themes/traffic/model_staging_view_data.gd")
 
 const REFERENCE_SIZE := Vector2(1080.0, 1920.0)
-const SAFE_MARGIN := 24.0
-const HUD_BAND := 120.0
-const STAGING_BAND := 140.0
-const MAX_BOARD_WIDTH := 720.0
 
+var presenter: PresenterScript = null
 var board_view: Control = null
 var staging_view: Control = null
 var hud_shell: Control = null
-var effects_layer: Node2D = null
-
-var _palette: PaletteScript = PaletteScript.new()
-var _viewport_size := REFERENCE_SIZE
 
 
 func _ready() -> void:
@@ -42,142 +30,126 @@ func _ready() -> void:
 
 func build() -> void:
 	_clear_built()
+	presenter = PresenterScript.new()
+	presenter.name = "Presenter"
+	add_child(presenter)
+	presenter.build()
 
-	hud_shell = HudShellScript.new()
-	hud_shell.name = "HudShell"
-	add_child(hud_shell)
+	board_view = presenter.board_view
+	staging_view = presenter.staging_view
+	hud_shell = presenter.hud_shell
 
-	board_view = BoardViewScript.new()
-	board_view.name = "BoardView"
-	board_view.set_board_data(Mock.sample_board())
-	add_child(board_view)
-
-	staging_view = StagingViewScript.new()
-	staging_view.name = "StagingView"
-	staging_view.set_staging_data(Mock.sample_staging(4))
-	add_child(staging_view)
-
-	effects_layer = Node2D.new()
-	effects_layer.name = "EffectsLayer"
-	add_child(effects_layer)
-
+	presenter.setup(Mock.sample_board())
+	presenter.set_staging(Mock.sample_staging(4))
+	presenter.set_objectives([&"COLOR_A", &"COLOR_B", &"COLOR_C", &"COLOR_D"])
 	hud_shell.set_level_text("MOCK LEVEL")
 	hud_shell.set_score_text("0")
-	hud_shell.set_objective_chips([&"COLOR_A", &"COLOR_B", &"COLOR_C", &"COLOR_D"])
 
 
-## Deterministic responsive layout for an explicit viewport size. Safe to call
-## headlessly (no viewport required).
 func layout_for(viewport_size: Vector2) -> void:
-	if board_view == null:
+	if presenter == null:
 		return
-	_viewport_size = viewport_size
-	var content_width := maxf(viewport_size.x - SAFE_MARGIN * 2.0, 1.0)
-
-	hud_shell.position = Vector2(SAFE_MARGIN, SAFE_MARGIN)
-	hud_shell.size = Vector2(content_width, HUD_BAND)
-
-	staging_view.position = Vector2(SAFE_MARGIN, maxf(viewport_size.y - STAGING_BAND - SAFE_MARGIN, 0.0))
-	staging_view.size = Vector2(content_width, STAGING_BAND)
-
-	var stage_height := viewport_size.y - HUD_BAND - STAGING_BAND - SAFE_MARGIN * 3.0
-	var board_available := Vector2(content_width, maxf(stage_height, 1.0))
-	board_view.layout_for_size(board_available, 0.0, MAX_BOARD_WIDTH)
-	board_view.position += Vector2(SAFE_MARGIN, SAFE_MARGIN + HUD_BAND + SAFE_MARGIN)
+	presenter.layout_for(viewport_size)
 
 
-func set_staging_slots(count: int) -> void:
-	if staging_view != null:
-		staging_view.set_staging_data(Mock.sample_staging(count))
+# --- M1 event demos ---------------------------------------------------------
 
-
-func set_staging_pressure(state: StringName) -> void:
-	if staging_view != null:
-		staging_view.set_pressure(state)
+func demo_entity_placed(entity_data: Variant = null) -> bool:
+	if presenter == null:
+		return false
+	var data: Variant = entity_data if entity_data != null else Mock.entity(
+		&"e_spawned", EntityData.TYPE_VAN, &"COLOR_D", Vector2i(2, 8), 0.0
+	)
+	presenter.show_entity(data)
+	return true
 
 
 func demo_select(entity_id: StringName) -> bool:
-	var view: Node2D = _entity_view(entity_id)
-	if view == null:
-		return false
-	view.set_selected(true)
-	return true
+	return presenter != null and presenter.set_entity_selected(entity_id, true)
 
 
 func demo_block(entity_id: StringName, axis: Vector2 = Vector2.RIGHT) -> bool:
-	var view: Node2D = _entity_view(entity_id)
-	if view == null:
+	if presenter == null:
 		return false
-	view.set_blocked(true)
-	var flash: Node2D = BlockedIndicatorScript.new()
-	add_child(flash)
-	flash.finished.connect(func() -> void: flash.queue_free())
-	flash.play(axis)
+	presenter.show_blocked(entity_id, axis, [&"e_compact_a"])
 	return true
 
 
-## Moves an entity along a cell path supplied by the caller (mock/demo only).
-func demo_move(entity_id: StringName, cells: Array) -> bool:
-	var view: Node2D = _entity_view(entity_id)
-	if view == null:
+func demo_move(entity_id: StringName, cells: Array) -> float:
+	if presenter == null:
+		return 0.0
+	return presenter.animate_path(entity_id, cells)
+
+
+func demo_command_rejected(entity_id: StringName, status: StringName = &"invalid", code: StringName = &"no_op_move") -> bool:
+	if presenter == null:
 		return false
-	var points := PackedVector2Array()
-	for cell: Variant in cells:
-		points.append(Vector2(
-			(float(cell.x) + 0.5) * board_view.cell_size,
-			(float(cell.y) + 0.5) * board_view.cell_size
-		))
-	var controller: Node2D = MovementControllerScript.new()
-	add_child(controller)
-	controller.finished.connect(func(_target: Variant) -> void: controller.queue_free())
-	controller.move_along(view, points, 0.4)
+	presenter.show_command_rejected(entity_id, status, code)
 	return true
+
+
+# --- M2 additive demos ------------------------------------------------------
+
+func demo_queue(destination_id: StringName, color_keys: Array) -> bool:
+	return presenter != null and presenter.set_queue(destination_id, color_keys)
+
+
+func demo_destination_update() -> bool:
+	if presenter == null:
+		return false
+	presenter.set_destination(Mock.sample_destination())
+	return true
+
+
+func demo_staging_slots(slot_count: int) -> void:
+	if presenter != null:
+		presenter.set_staging(Mock.sample_staging(slot_count))
+
+
+func demo_staging_pressure(state: StringName) -> void:
+	if presenter != null:
+		presenter.set_staging_pressure(state)
+
+
+func demo_item_loaded(destination_id: StringName, color_key: StringName = &"COLOR_A") -> bool:
+	return presenter != null and presenter.show_item_loaded(destination_id, color_key)
 
 
 func demo_match(entity_id: StringName) -> bool:
-	var view: Node2D = _entity_view(entity_id)
-	if view == null:
-		return false
-	var effect: Node2D = MatchEffectScript.new()
-	effects_layer.add_child(effect)
-	effect.finished.connect(func() -> void: effect.queue_free())
-	effect.play(board_view.position + view.position, view.color_key())
-	return true
+	return presenter != null and presenter.show_match(entity_id)
 
 
-func demo_win() -> void:
-	_spawn_effect(CompletionEffectScript.new(), "win")
+func demo_objective_complete(objective_id: StringName = &"objective_mock") -> bool:
+	return presenter != null and presenter.show_objective_complete(objective_id)
 
 
-func demo_fail(reason: StringName) -> void:
-	var effect: Node2D = FailureEffectScript.new()
-	effect.play(reason)
-	effects_layer.add_child(effect)
-	effect.finished.connect(func() -> void: effect.queue_free())
+func demo_win() -> float:
+	return presenter.show_win() if presenter != null else 0.0
 
 
-func palette_keys() -> Array:
-	return _palette.all_keys()
+func demo_fail(fail_reason: StringName) -> float:
+	return presenter.show_fail(fail_reason) if presenter != null else 0.0
 
 
-func _spawn_effect(effect: Node2D, _tag: String) -> void:
-	effect.position = _viewport_size * 0.5
-	effects_layer.add_child(effect)
-	effect.finished.connect(func() -> void: effect.queue_free())
-	effect.play()
+func demo_fail_staging_full() -> float:
+	return demo_fail(&"STAGING_FULL")
 
 
-func _entity_view(entity_id: StringName) -> Node2D:
-	if board_view == null:
-		return null
-	return board_view.entity_view(entity_id)
+func demo_fail_no_valid_moves() -> float:
+	return demo_fail(&"NO_VALID_MOVES")
+
+
+## Drives bounded effects/locks when the sandbox is used headlessly.
+func advance(delta: float) -> void:
+	if presenter != null:
+		presenter.advance(delta)
 
 
 func _clear_built() -> void:
 	for child: Node in get_children():
 		remove_child(child)
 		child.free()
+	presenter = null
 	board_view = null
 	staging_view = null
 	hud_shell = null
-	effects_layer = null
