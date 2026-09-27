@@ -413,3 +413,63 @@ runtime playback/pool/bus fallback, sound/haptics gates, tap acknowledgement,
 eased movement + authoritative settlement, blocked/rejected, match/loading pulse,
 objective feedback, completion/fail sequencing, the 350 ms result guard,
 settings UI intents + apply, bounded transitions, and effect caps.
+
+## 17. M5 Level Lab (AGENT-2 debug tooling)
+
+`game/themes/traffic/dev/m5/**` is a **developer-only** content inspector built
+while AGENT-1 implements the M5 Content Engine. It renders plain supplied data;
+it never validates, solves, generates or mutates gameplay, and it imports no
+core/puzzle/solver/levels/persistence code.
+
+```text
+level_lab_contract.gd          flat plain-data contract + lenient normalizers
+level_lab_model.gd             holds normalized preview/validation/solver; builds Traffic DTOs
+level_lab_view.gd              visual inspector (reuses BoardView) + text panels
+level_lab_path_overlay.gd      debug path drawing (start marker, numbered nodes, arrowhead)
+solution_playback_controller.gd supplied-command playback with an optional driver
+level_lab.gd + level_lab.tscn  orchestrator + dev entry scene
+m5_samples.gd                  1–2 sample previews (dev fixtures only)
+```
+
+**Contract (boundary).** `normalize_preview` produces a flat dictionary:
+`level_id`, `schema_version`, `revision`, `board_width/height`, `staging_slots`,
+`obstacles`, `entities`, `destinations`, `paths`, `items`, `queues`,
+`objectives`. It is deliberately lenient (accepts `width`/`board_width`,
+`vehicles`/`entities`, `stations`/`destinations`, `color`/`color_key`, cell
+dicts/`Vector2i`, footprint dicts/`Vector2i`, routes/paths) and never crashes on
+malformed input. `normalize_validation` yields `VALID`/`INVALID` + errors
+(`code`, `path`, `message`); `normalize_solver` yields
+`SOLVABLE`/`UNSOLVABLE`/`UNKNOWN` + metrics; `normalize_commands` yields
+`{type, entity_id}` (entity-less entries dropped).
+
+**API.** `show_level(preview)`, `show_levels(levels, index)`,
+`set_validation_result(raw)`, `set_solver_result(raw)`, `set_playback_driver(d)`,
+`play_solution()`, `step_solution()`, `reset_preview()`, `next_level()`,
+`previous_level()`, `layout_for(viewport)`, plus `model()/view()/playback()`
+accessors. Cross-integration adapts `LevelDefinition`, `LevelValidationResult`
+and `SolverResult` into these plain shapes.
+
+**Rendering.** Reuses `BoardView` (no second gameplay renderer). Paths are drawn
+by the overlay with a start marker, ordered numbered nodes and a direction
+arrowhead. Queues show ordered `1→COLOR_A(circle)` entries (color + symbol, never
+color alone). Staging and objectives are listed. Validation shows `VALID` or
+`INVALID (N)` with each `code @path: message`. Solver shows status, depth,
+visited/expanded/dead-ends/branching/runtime and the numbered command list.
+
+**Playback.** `solution_playback_controller` walks a supplied command array
+exactly once per step, never overflows past the end, and resets to step 0. An
+optional driver (`reset()`/`execute(command)`/`snapshot()`) is supplied later by
+cross-integration; without one the controller emits `driver_missing`. It never
+solves.
+
+**Debug gating.** `debug_enabled` defaults to `OS.is_debug_build()`; when off the
+lab hides itself, refuses levels, and disables its controls. The dev scene
+(`level_lab.tscn`) is never referenced by production startup, and the normal Main
+Menu is unchanged.
+
+**Tests:** `game/tests/m5_tooling_test.gd` covers contract normalization
+(including malformed input), model counts/board mapping/queue order/path
+synthesis, view rendering + texts + responsive layout + invalid preview safety,
+path overlay, playback step/reset/bounds + driver hook, lab navigation, level
+switch state clearing + bounded node count, validation/solver UI, play/reset,
+the debug gate, and scene loading.
