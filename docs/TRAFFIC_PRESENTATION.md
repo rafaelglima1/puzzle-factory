@@ -473,3 +473,44 @@ synthesis, view rendering + texts + responsive layout + invalid preview safety,
 path overlay, playback step/reset/bounds + driver hook, lab navigation, level
 switch state clearing + bounded node count, validation/solver UI, play/reset,
 the debug gate, and scene loading.
+
+## 18. M6 Generator Lab (AGENT-2 debug tooling)
+
+`game/themes/traffic/dev/m6/**` is a developer-only inspector for generation
+output, built alongside AGENT-1's generation engine. Like the M5 Level Lab it
+renders plain supplied data only: it never generates, solves, validates or
+mutates anything, and imports no generator/solver/levels/core/puzzle code.
+
+```text
+generator_lab_contract.gd      lenient plain-data normalizers (candidate/batch/...)
+generator_lab_model.gd         normalized candidates + batch + filtering; builds board DTOs
+generator_lab_view.gd          visual inspector (reuses BoardView + M5 path overlay)
+generator_lab.gd + .tscn       orchestrator + dev entry scene
+m6_samples.gd                  candidate/batch fixtures (dev only)
+```
+
+**Candidate contract.** `candidate_id`, `seed`, `preview` (normalized through the
+M5 preview contract), `generation` (constraints), `validation`, `solver`,
+`difficulty` (`score` clamped 0..1, `bucket` in EASY/MEDIUM/HARD/EXPERT/UNKNOWN,
+`components`), `dedupe` (`fingerprint`, `duplicate`, `of`), `decision`
+(ACCEPTED/REJECTED + reasons). `normalize_batch` yields
+`generated/invalid/unsolvable/duplicates/accepted` + a bucket histogram. All
+normalizers are lenient and never crash on malformed input.
+
+**Capabilities.** Candidate board preview and paths; info (id/seed/board/entities);
+generation constraints; validation status + errors; solver status + depth/
+visited/expanded/dead-ends/branching/runtime; difficulty score/bucket/components;
+dedupe fingerprint + duplicate origin; accept/reject decision + reasons; batch
+counts with a small text histogram. Navigation: previous/next within the
+filtered list; filters by bucket and decision (ALL/EASY/MEDIUM/HARD/EXPERT and
+ALL/ACCEPTED/REJECTED).
+
+**Debug gating.** `debug_enabled` defaults to `OS.is_debug_build()`; when off the
+lab hides itself, refuses candidates, and disables controls. The dev scene is
+never referenced by production startup.
+
+**Tests:** `game/tests/m6_tooling_test.gd` covers normalization (candidate/
+difficulty/bucket/dedupe/decision/batch), malformed-input safety, model
+counts/board mapping/histogram, filter behavior, view rendering + responsive
+layout, lab navigation, difficulty/rejection/dedupe/batch display, empty-filter
+state, repeated-load node stability, the debug gate, and scene loading.
