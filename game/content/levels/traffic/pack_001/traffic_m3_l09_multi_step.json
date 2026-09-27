@@ -1,0 +1,79 @@
+{
+  "schemaVersion": 1,
+  "levelId": "traffic_m3_l09_multi_step",
+  "revision": 1,
+  "seed": 19,
+  "themeId": "traffic",
+  "board": {"width": 6, "height": 4},
+  "paths": [
+    {"id": "route_block", "cells": [{"x": 2, "y": 1}, {"x": 3, "y": 1}, {"x": 4, "y": 1}]},
+    {"id": "route_vb", "cells": [{"x": 0, "y": 1}, {"x": 1, "y": 1}, {"x": 2, "y": 1}, {"x": 3, "y": 1}, {"x": 4, "y": 1}]},
+    {"id": "route_vc", "cells": [{"x": 0, "y": 3}, {"x": 1, "y": 3}, {"x": 2, "y": 3}]}
+  ],
+  "entities": [
+    {
+      "id": "v_block",
+      "type": "van",
+      "colorKey": "COLOR_A",
+      "capacity": 1,
+      "position": {"x": 2, "y": 1},
+      "footprint": {"width": 1, "height": 1},
+      "pathId": "route_block",
+      "destinationId": "station_ab"
+    },
+    {
+      "id": "v_b",
+      "type": "compact",
+      "colorKey": "COLOR_B",
+      "capacity": 1,
+      "position": {"x": 0, "y": 1},
+      "footprint": {"width": 1, "height": 1},
+      "pathId": "route_vb",
+      "destinationId": "station_ab"
+    },
+    {
+      "id": "v_c",
+      "type": "compact",
+      "colorKey": "COLOR_C",
+      "capacity": 1,
+      "position": {"x": 0, "y": 3},
+      "footprint": {"width": 1, "height": 1},
+      "pathId": "route_vc",
+      "destinationId": "station_c"
+    }
+  ],
+  "items": [
+    {"id": "p_a1", "type": "standard", "colorKey": "COLOR_A", "destinationId": "station_ab"},
+    {"id": "p_b1", "type": "standard", "colorKey": "COLOR_B", "destinationId": "station_ab"},
+    {"id": "p_c1", "type": "standard", "colorKey": "COLOR_C", "destinationId": "station_c"}
+  ],
+  "queues": [
+    {"id": "q_ab", "itemIds": ["p_a1", "p_b1"]},
+    {"id": "q_c", "itemIds": ["p_c1"]}
+  ],
+  "destinations": [
+    {
+      "id": "station_ab",
+      "type": "default",
+      "acceptedKeys": ["COLOR_A", "COLOR_B"],
+      "capacity": 0,
+      "queueId": "q_ab",
+      "position": {"x": 5, "y": 0},
+      "footprint": {"width": 1, "height": 1}
+    },
+    {
+      "id": "station_c",
+      "type": "default",
+      "acceptedKeys": ["COLOR_C"],
+      "capacity": 1,
+      "queueId": "q_c",
+      "position": {"x": 5, "y": 3},
+      "footprint": {"width": 1, "height": 1}
+    }
+  ],
+  "staging": {"slots": 2},
+  "objectives": [{"id": "clear_all", "type": "CLEAR_ALL", "mandatory": true}],
+  "allowedBoosters": [],
+  "difficultyTarget": null,
+  "tags": []
+}

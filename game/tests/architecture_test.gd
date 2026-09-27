@@ -48,6 +48,8 @@ func run() -> void:
 	_generic_layers_ignore_integration()
 	_integration_layer_is_product_specific()
 	_persistence_layer_is_product_free()
+	_m5_platform_layers_are_product_free()
+	_solver_layer_is_product_free()
 
 
 func _collect_scripts() -> void:
@@ -146,3 +148,38 @@ func _persistence_layer_is_product_free() -> void:
 			if _contains_word(text, term):
 				violations.append("%s contains '%s'" % [path, term])
 	check(violations.is_empty(), "persistence stays product-free (%s)" % ", ".join(violations))
+
+
+## M5 content platform: `game/levels/**` is generic schema/loader/validator/
+## migration/pack infrastructure and must stay product-free (no theme term) and
+## must not reach into the product integration or content layers.
+func _m5_platform_layers_are_product_free() -> void:
+	var scripts := _collect_gd("res://levels")
+	check(scripts.size() >= 6, "level platform present (%d scripts)" % scripts.size())
+	var violations: Array[String] = []
+	for path: String in scripts:
+		var text := FileAccess.get_file_as_string(path)
+		for term in FORBIDDEN_TERMS:
+			if _contains_word(text, term):
+				violations.append("%s contains '%s'" % [path, term])
+		if text.contains("res://integration") or text.contains("res://content/"):
+			violations.append("%s depends on product content/integration" % path)
+	check(violations.is_empty(), "level platform stays product-free (%s)" % ", ".join(violations))
+
+
+## M5 solver: `game/solver/**` is generic search over a domain adapter and must
+## stay product-free, scene-tree-free and independent of theme/integration.
+func _solver_layer_is_product_free() -> void:
+	var scripts := _collect_gd("res://solver")
+	check(scripts.size() >= 5, "solver present (%d scripts)" % scripts.size())
+	var violations: Array[String] = []
+	for path: String in scripts:
+		var text := FileAccess.get_file_as_string(path)
+		for term in FORBIDDEN_TERMS:
+			if _contains_word(text, term):
+				violations.append("%s contains '%s'" % [path, term])
+		if text.contains("res://integration") or text.contains("res://themes") or text.contains("res://content/"):
+			violations.append("%s depends on product/theme layer" % path)
+		if text.contains("extends Node") or text.contains("get_tree()"):
+			violations.append("%s uses the scene tree" % path)
+	check(violations.is_empty(), "solver stays product-free and scene-tree-free (%s)" % ", ".join(violations))

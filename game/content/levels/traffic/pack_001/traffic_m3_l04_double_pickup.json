@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "levelId": "traffic_m3_l04_double_pickup",
+  "revision": 1,
+  "seed": 14,
+  "themeId": "traffic",
+  "board": {"width": 6, "height": 3},
+  "paths": [
+    {"id": "route_v1", "cells": [{"x": 0, "y": 0}, {"x": 1, "y": 0}, {"x": 2, "y": 0}]},
+    {"id": "route_v2", "cells": [{"x": 0, "y": 2}, {"x": 1, "y": 2}, {"x": 2, "y": 2}]}
+  ],
+  "entities": [
+    {
+      "id": "v1",
+      "type": "van",
+      "colorKey": "COLOR_A",
+      "capacity": 2,
+      "position": {"x": 0, "y": 0},
+      "footprint": {"width": 1, "height": 1},
+      "pathId": "route_v1",
+      "destinationId": "station_a"
+    },
+    {
+      "id": "v2",
+      "type": "compact",
+      "colorKey": "COLOR_B",
+      "capacity": 1,
+      "position": {"x": 0, "y": 2},
+      "footprint": {"width": 1, "height": 1},
+      "pathId": "route_v2",
+      "destinationId": "station_b"
+    }
+  ],
+  "items": [
+    {"id": "p_a1", "type": "standard", "colorKey": "COLOR_A", "destinationId": "station_a"},
+    {"id": "p_a2", "type": "standard", "colorKey": "COLOR_A", "destinationId": "station_a"},
+    {"id": "p_b1", "type": "standard", "colorKey": "COLOR_B", "destinationId": "station_b"}
+  ],
+  "queues": [
+    {"id": "q_a", "itemIds": ["p_a1", "p_a2"]},
+    {"id": "q_b", "itemIds": ["p_b1"]}
+  ],
+  "destinations": [
+    {
+      "id": "station_a",
+      "type": "default",
+      "acceptedKeys": ["COLOR_A"],
+      "capacity": 0,
+      "queueId": "q_a",
+      "position": {"x": 5, "y": 0},
+      "footprint": {"width": 1, "height": 1}
+    },
+    {
+      "id": "station_b",
+      "type": "default",
+      "acceptedKeys": ["COLOR_B"],
+      "capacity": 0,
+      "queueId": "q_b",
+      "position": {"x": 5, "y": 2},
+      "footprint": {"width": 1, "height": 1}
+    }
+  ],
+  "staging": {"slots": 4},
+  "objectives": [{"id": "clear_all", "type": "CLEAR_ALL", "mandatory": true}],
+  "allowedBoosters": [],
+  "difficultyTarget": null,
+  "tags": []
+}

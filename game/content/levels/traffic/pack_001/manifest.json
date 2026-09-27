@@ -1,0 +1,17 @@
+{
+  "packId": "traffic_pack_001",
+  "contentVersion": 1,
+  "minGameVersion": 1,
+  "levels": [
+    "traffic_m3_l01_first_roll.json",
+    "traffic_m3_l02_two_lanes.json",
+    "traffic_m3_l03_right_order.json",
+    "traffic_m3_l04_double_pickup.json",
+    "traffic_m3_l05_tight_parking.json",
+    "traffic_m3_l06_the_blocker.json",
+    "traffic_m3_l07_three_colors.json",
+    "traffic_m3_l08_no_room_to_wait.json",
+    "traffic_m3_l09_multi_step.json",
+    "traffic_m3_l10_rush_hour.json"
+  ]
+}

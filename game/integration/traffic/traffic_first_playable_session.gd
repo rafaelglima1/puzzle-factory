@@ -261,12 +261,25 @@ func dispose() -> void:
 
 # --- internals -----------------------------------------------------------------
 
+## Loads and builds one level through the official M5 content platform:
+## manifest pack -> LevelLoader (parse + migrate) -> LevelValidator ->
+## TrafficLevelDefinitionAdapter -> TrafficGameFactory -> Simulation. The
+## hardcoded M3 catalogue is no longer consulted; official JSON is the single
+## source of truth (see docs/LEVEL_SCHEMA.md).
 func _begin_level(level_index: int, is_restart: bool, is_debug: bool) -> bool:
-	var definition := M3LevelCatalogue.definition(level_index)
-	if definition.is_empty():
+	var load_result := TrafficLevelCatalogue.load_load_result(level_index)
+	if not load_result.is_ok():
 		session_error.emit(ERROR_INVALID_LEVEL_INDEX)
 		return false
-	var simulation := TrafficGameFactory.build(definition)
+	var definition := load_result.definition
+	if definition == null:
+		session_error.emit(ERROR_INVALID_LEVEL_INDEX)
+		return false
+	var validation_errors := LevelValidator.validate(definition)
+	if not validation_errors.is_empty():
+		session_error.emit(ERROR_LEVEL_BUILD_FAILED)
+		return false
+	var simulation := TrafficLevelDefinitionAdapter.build_simulation(definition)
 	if simulation == null:
 		session_error.emit(ERROR_LEVEL_BUILD_FAILED)
 		return false

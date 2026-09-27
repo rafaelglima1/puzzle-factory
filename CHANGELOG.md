@@ -6,6 +6,37 @@ versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — M5 content engine (level platform + official content + solver)
+
+- **Level platform** (`game/levels/**`, generic and product-free): versioned
+  `LevelDefinition` schema v1, `LevelLoader` (read → parse → migrate → build →
+  validate with structured `LevelLoadResult`), static `LevelValidator` with
+  machine-readable error codes, deterministic `LevelMigrator` (explicit
+  vN→vN+1 chain), and `LevelPack` manifest parsing. Contract:
+  `docs/LEVEL_SCHEMA.md`.
+- **Official content pack** (`game/content/levels/traffic/pack_001/`): all ten
+  Project Traffic levels converted from the M3 hardcoded catalogue to schema-v1
+  JSON, preserving ids, seeds, board, staging, paths, entity/item placement,
+  queue FIFO order and objectives. `M3LevelCatalogue` is now a compatibility
+  facade over the pack — no duplicate hardcoded authority remains.
+- **Runtime cutover:** `TrafficFirstPlayableSession` starts every level through
+  the official platform (pack → loader → validator → adapter → factory), so
+  production uses the official content. Progression ids are unchanged.
+- **Solver** (`game/solver/**`, generic and product-free): deterministic
+  SHA-256 state hashing, `BfsSolver` with visited/losing/no-op pruning and
+  predecessor reconstruction, `SolverResult` metrics, and `SolutionReplay`.
+  `SOLVABLE` is returned only after the solution independently replays to WON.
+  Contract: `docs/SOLVER.md`.
+- **Traffic adapters:** `TrafficLevelDefinitionAdapter` (generic → Traffic
+  mapping) and `TrafficSolverDomain` (drives the real simulation through the
+  generic solver).
+- **Tooling:** `scripts/solve_level.ps1` headless solver CLI (one level, a file,
+  `--all`, `--json`, `--expect-unsolvable`). Measured report:
+  `docs/SOLVER_PERFORMANCE.md` — 10/10 official levels SOLVABLE, max depth 4,
+  max 13 visited states, no bounds hit.
+- Architecture guards extended: `game/levels/**` and `game/solver/**` are
+  product-free (and the solver is scene-tree-free).
+
 ### Added — M4 UX / juice + presentation settings integration
 
 - Presentation UX/juice (AGENT-2): immediate tap acknowledgement, eased movement,

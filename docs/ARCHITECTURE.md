@@ -113,9 +113,10 @@ compatibility, with `is_won()`/`is_lost()` aliases.
 
 M3 adds, in the same layer:
 
-- `m3_level_catalogue.gd` — the ten hand-authored M3 levels as product data
-  (validated against `TrafficGameFactory`; M5 replaces it with the formal
-  LevelSchema/loader and moves data to `content/levels/`);
+- `m3_level_catalogue.gd` — COMPATIBILITY FACADE (M5 cutover): the ten levels
+  no longer live here; the official content pack is the single source of truth
+  and this class delegates to `TrafficLevelCatalogue` + `LevelValidator` so M3
+  callers keep their API without a second hardcoded copy;
 - `traffic_first_playable_session.gd` — first-playable orchestration: owns the
   current `Simulation`, level index, restart/next flow, progress updates,
   presentation binding and the per-command `forward_result` +
@@ -151,6 +152,32 @@ the robust save/migration system and a consolidated `settings` block.
 Station board anchors (cell/footprint) live in generic `Destination.metadata`
 as product composition data, so core stays agnostic while presentation gets
 what it needs.
+
+### M5 content platform + solver
+
+`game/levels/**` (generic, product-free, guarded by `architecture_test.gd`):
+
+- `definitions/` — `LevelDefinition` (schema v1) + `LevelLoadResult`;
+- `loader/` — `LevelLoader` (read → parse → migrate → build → validate);
+- `validator/` — `LevelValidator` (static, structured error codes; never solves);
+- `migrations/` — `LevelMigrator` (explicit vN→vN+1 chain, deterministic);
+- `packs/` — `LevelPack` (manifest).
+
+`game/solver/**` (generic, product-free, scene-tree-free):
+
+- `state_hasher.gd` — canonical SHA-256 logical-state identity;
+- `solver_domain.gd` — the product adapter contract;
+- `bfs_solver.gd` — BFS + visited/losing/no-op pruning + predecessor
+  reconstruction; `SOLVABLE` only after an independent replay;
+- `solution_replay.gd`, `solver_result.gd`.
+
+Official content lives in `game/content/levels/traffic/pack_001/` (JSON). The
+product adapter `game/integration/traffic/levels/traffic_level_definition_adapter.gd`
+maps generic definitions to the Traffic factory, and
+`game/integration/traffic/solver/traffic_solver_domain.gd` drives the real
+simulation through the generic solver. Production startup resolves levels
+through the official pack (no hardcoded catalogue). Contracts:
+`docs/LEVEL_SCHEMA.md`, `docs/SOLVER.md`.
 
 ## 6. Build environments
 
@@ -199,8 +226,8 @@ Implemented:
   with v1 migration, architecture guards.
 - **M3 (AGENT-1 half):** `TrafficFirstPlayableSession` orchestration (play /
   start / restart / next / debug select / dispatch + presentation binding and
-  authoritative sync), the ten-level `M3LevelCatalogue`
-  (`game/integration/traffic/`, product data — M5 replaces it), and
+  authoritative sync), the ten-level catalogue (now the M5 official content
+  pack; `M3LevelCatalogue` is a compatibility facade), and
   `M3ProgressStore` (`game/persistence/`, minimal unlock persistence under
   `user://`). Contract for the UI shell: `docs/M3_SESSION_CONTRACT.md`.
 - **M3 (integration, both halves):** `TrafficM3AppController` composes the
@@ -219,14 +246,22 @@ Implemented:
   settings store, loads it before the shell is shown, applies the persisted
   values before `show_main_menu()`, and persists Settings toggles. Presentation
   still imports no persistence; the store imports no presentation.
+- **M5 (content engine):** the formal versioned level platform
+  (`game/levels/**`: schema v1, loader, static validator, deterministic
+  migration, pack manifest), the official Project Traffic content pack
+  (`game/content/levels/traffic/pack_001/`, ten levels), the generic BFS solver
+  with deterministic state hashing and replay validation (`game/solver/**`),
+  the Traffic adapters (`game/integration/traffic/levels/**`,
+  `game/integration/traffic/solver/**`), and the runtime cutover so the session
+  and app start levels from the official pack. Contracts:
+  `docs/LEVEL_SCHEMA.md`, `docs/SOLVER.md`, `docs/SOLVER_PERFORMANCE.md`.
 
 Deferred:
 
 | Concern | Milestone |
 |---|---|
 | Production music/SFX assets, volume sliders, locale | M4 polish / later |
-| Level schema/loader/validator/migrations, obstacles; replaces the M3 catalogue | M5 |
-| Solver + state hashing, difficulty analyzer, generator | M6–M8 |
+| Difficulty score/buckets/weights, level generator, batch generation, dedupe (new M6 generation engine) | M6 |
 | Robust progression/coins/save/migration (replaces `M3ProgressStore`) | M10 |
 | Boosters / undo | M11 |
 | Analytics/remote config/monetization abstractions | M12–M14 |

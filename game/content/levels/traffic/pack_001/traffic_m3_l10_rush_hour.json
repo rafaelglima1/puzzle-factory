@@ -1,0 +1,91 @@
+{
+  "schemaVersion": 1,
+  "levelId": "traffic_m3_l10_rush_hour",
+  "revision": 1,
+  "seed": 20,
+  "themeId": "traffic",
+  "board": {"width": 7, "height": 4},
+  "paths": [
+    {"id": "route_block", "cells": [{"x": 3, "y": 1}, {"x": 4, "y": 1}, {"x": 5, "y": 1}]},
+    {"id": "route_vb", "cells": [{"x": 0, "y": 1}, {"x": 1, "y": 1}, {"x": 2, "y": 1}, {"x": 3, "y": 1}, {"x": 4, "y": 1}, {"x": 5, "y": 1}]},
+    {"id": "route_vc", "cells": [{"x": 0, "y": 2}, {"x": 1, "y": 2}, {"x": 2, "y": 2}, {"x": 3, "y": 2}]},
+    {"id": "route_vd", "cells": [{"x": 0, "y": 3}, {"x": 1, "y": 3}, {"x": 2, "y": 3}]}
+  ],
+  "entities": [
+    {
+      "id": "v_block",
+      "type": "truck",
+      "colorKey": "COLOR_A",
+      "capacity": 2,
+      "position": {"x": 3, "y": 1},
+      "footprint": {"width": 1, "height": 1},
+      "pathId": "route_block",
+      "destinationId": "station_main"
+    },
+    {
+      "id": "v_b",
+      "type": "van",
+      "colorKey": "COLOR_B",
+      "capacity": 1,
+      "position": {"x": 0, "y": 1},
+      "footprint": {"width": 1, "height": 1},
+      "pathId": "route_vb",
+      "destinationId": "station_main"
+    },
+    {
+      "id": "v_c",
+      "type": "compact",
+      "colorKey": "COLOR_C",
+      "capacity": 1,
+      "position": {"x": 0, "y": 2},
+      "footprint": {"width": 1, "height": 1},
+      "pathId": "route_vc",
+      "destinationId": "station_main"
+    },
+    {
+      "id": "v_d",
+      "type": "compact",
+      "colorKey": "COLOR_D",
+      "capacity": 1,
+      "position": {"x": 0, "y": 3},
+      "footprint": {"width": 1, "height": 1},
+      "pathId": "route_vd",
+      "destinationId": "station_d"
+    }
+  ],
+  "items": [
+    {"id": "p_a1", "type": "standard", "colorKey": "COLOR_A", "destinationId": "station_main"},
+    {"id": "p_b1", "type": "standard", "colorKey": "COLOR_B", "destinationId": "station_main"},
+    {"id": "p_c1", "type": "standard", "colorKey": "COLOR_C", "destinationId": "station_main"},
+    {"id": "p_d1", "type": "standard", "colorKey": "COLOR_D", "destinationId": "station_d"}
+  ],
+  "queues": [
+    {"id": "q_main", "itemIds": ["p_a1", "p_b1", "p_c1"]},
+    {"id": "q_d", "itemIds": ["p_d1"]}
+  ],
+  "destinations": [
+    {
+      "id": "station_main",
+      "type": "default",
+      "acceptedKeys": ["COLOR_A", "COLOR_B", "COLOR_C"],
+      "capacity": 0,
+      "queueId": "q_main",
+      "position": {"x": 6, "y": 1},
+      "footprint": {"width": 1, "height": 1}
+    },
+    {
+      "id": "station_d",
+      "type": "default",
+      "acceptedKeys": ["COLOR_D"],
+      "capacity": 1,
+      "queueId": "q_d",
+      "position": {"x": 6, "y": 3},
+      "footprint": {"width": 1, "height": 1}
+    }
+  ],
+  "staging": {"slots": 1},
+  "objectives": [{"id": "clear_all", "type": "CLEAR_ALL", "mandatory": true}],
+  "allowedBoosters": [],
+  "difficultyTarget": null,
+  "tags": []
+}
