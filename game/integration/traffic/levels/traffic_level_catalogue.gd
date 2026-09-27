@@ -57,6 +57,14 @@ static func index_of(target_id: StringName) -> int:
 	return -1
 
 
+## Manifest filename at [param level_index] (empty when out of range).
+static func pack_level_filename(level_index: int) -> String:
+	_ensure_loaded()
+	if _pack == null or level_index < 0 or level_index >= _pack.levels.size():
+		return ""
+	return _pack.levels[level_index]
+
+
 ## Loads the raw [LevelLoadResult] for [param level_index] through [LevelLoader].
 static func load_load_result(level_index: int) -> LevelLoadResult:
 	_ensure_loaded()
@@ -101,6 +109,7 @@ static func validate_all() -> PackedStringArray:
 		errors.append("unexpected_level_count:%d" % _pack.levels.size())
 
 	var seen := {}
+	var seen_definition_ids := {}
 	for index in _pack.levels.size():
 		var id_value := level_id(index)
 		var label := String(id_value)
@@ -118,9 +127,41 @@ static func validate_all() -> PackedStringArray:
 		if definition == null:
 			errors.append("%s:definition_missing" % label)
 			continue
+		# Identity consistency: the manifest filename stem is the catalogue id,
+		# but progression relies on the id inside the LevelDefinition. The
+		# official convention is `filename stem == definition.level_id`, and the
+		# ACTUAL definition id must be unique across the pack (two different
+		# filenames may not resolve to the same internal id).
+		errors.append_array(validate_level_identity(_pack.levels[index], definition))
+		# Track the ACTUAL definition ids so a malformed pack whose files share an
+		# internal id is rejected even when the filenames differ.
+		var definition_id := String(definition.level_id)
+		if seen_definition_ids.has(definition_id):
+			errors.append("DUPLICATE_DEFINITION_LEVEL_ID:%s" % definition_id)
+		seen_definition_ids[definition_id] = true
 		for error in LevelValidator.validate(definition):
 			errors.append("%s:%s" % [label, error])
 	return errors
+
+
+## Deterministic identity check for one manifest entry. Returns machine-readable
+## errors; empty means the file and its definition agree. Extracted so malformed
+## fixtures can be tested without touching production content files.
+static func validate_level_identity(file_name: String, definition: LevelDefinition) -> PackedStringArray:
+	var errors := PackedStringArray()
+	var filename_id := filename_level_id(file_name)
+	if definition == null:
+		errors.append("LEVEL_IDENTITY_MISSING_DEFINITION:%s" % String(filename_id))
+		return errors
+	var definition_id := String(definition.level_id)
+	if String(filename_id) != definition_id:
+		errors.append("LEVEL_ID_FILENAME_MISMATCH:%s:%s" % [String(filename_id), definition_id])
+	return errors
+
+
+## Catalogue id derived from a manifest filename (stem without `.json`).
+static func filename_level_id(file_name: String) -> StringName:
+	return _level_id_from_file(file_name)
 
 
 static func _ensure_loaded() -> void:

@@ -1,9 +1,13 @@
 extends "res://tests/framework/test_base.gd"
-## M5 Traffic content conversion: official V1 JSON pack vs the legacy M3
-## hardcoded catalogue, plus the adapter and solver-domain seams.
+## M5 Traffic content conversion: the official V1 JSON pack, its adapter and
+## solver-domain seams, plus pack identity integrity.
 ##
-## The M3 catalogue is read here ONLY as a legacy regression reference; the
-## production content path (TrafficLevelCatalogue / JSON) never uses it.
+## NOTE: `M3LevelCatalogue` is NOT an independent legacy data source any more —
+## since the M5 cutover it is a compatibility facade over this same official
+## content pack. Reading it here is therefore a facade self-consistency check
+## (the adapter round-trips through the passing path), not independent legacy
+## verification. The independent gameplay compatibility evidence lives in
+## `game/tests/m3_levels_solvable_test.gd` (the proven M3 solution scripts).
 
 const EXPECTED_LEVEL_IDS: Array[String] = [
 	"traffic_m3_l01_first_roll",
@@ -36,8 +40,9 @@ const FIRST_MOVES := {
 
 func run() -> void:
 	_manifest_shape()
-	_conversion_matches_m3()
+	_conversion_facade_roundtrip()
 	_all_official_levels_validate()
+	_level_identity_consistency()
 	_adapter_builds_simulations()
 	_solver_domain_clone_semantics()
 
@@ -69,7 +74,11 @@ func _manifest_shape() -> void:
 		check(result.is_ok(), "level %d file resolves and loads (%s)" % [index, ",".join(result.errors)])
 
 
-func _conversion_matches_m3() -> void:
+## Facade self-consistency: `M3LevelCatalogue` is a compatibility facade that
+## delegates to this same official pack, so its adapter-round-tripped dictionary
+## must agree with the loaded official definition. (Not independent legacy
+## verification — see the header note.)
+func _conversion_facade_roundtrip() -> void:
 	for index in M3LevelCatalogue.count():
 		var m3 := M3LevelCatalogue.definition(index)
 		var official := TrafficLevelCatalogue.load_definition(index)
@@ -205,5 +214,84 @@ func _find_path(definition: LevelDefinition, path_id: String) -> Variant:
 func _has_candidate(candidates: Array, entity_id: String) -> bool:
 	for candidate in candidates:
 		if str(candidate.get("entityId", "")) == entity_id:
+			return true
+	return false
+
+
+# --- pack identity integrity --------------------------------------------------
+
+## The official convention is `filename stem == LevelDefinition.level_id`, and
+## the ACTUAL definition id must be unique across the pack. These checks use the
+## real helper for single-entry identity, and a tiny in-test pack scan for the
+## duplicate-internal-id case, so malformed fixtures never touch production files.
+func _level_identity_consistency() -> void:
+	# 1) Every production entry matches: filename stem == definition.level_id.
+	for index in TrafficLevelCatalogue.count():
+		var file_name := TrafficLevelCatalogue.pack_level_filename(index)
+		var definition := TrafficLevelCatalogue.load_definition(index)
+		check(definition != null, "level %d loads for identity check" % index)
+		if definition == null:
+			continue
+		check_eq(
+			TrafficLevelCatalogue.validate_level_identity(file_name, definition).size(),
+			0,
+			"official %s filename matches its levelId" % file_name
+		)
+		check_eq(String(definition.level_id), String(TrafficLevelCatalogue.filename_level_id(file_name)), "%s identity is consistent" % file_name)
+
+	# 2) matching filename + levelId -> valid.
+	var matching := _identity_definition(&"same_id")
+	check_eq(
+		TrafficLevelCatalogue.validate_level_identity("same_id.json", matching).size(),
+		0,
+		"matching filename stem and levelId is valid"
+	)
+
+	# 3) filename / levelId mismatch -> rejected.
+	check(_has_identity_error(
+		TrafficLevelCatalogue.validate_level_identity("traffic_001.json", _identity_definition(&"traffic_999")),
+		"LEVEL_ID_FILENAME_MISMATCH"
+	), "filename/levelId mismatch is rejected")
+
+	# 4) two different filenames with the same internal levelId -> duplicate id.
+	var pack_ids := {
+		"a.json": _identity_definition(&"same_id"),
+		"b.json": _identity_definition(&"same_id"),
+	}
+	check(_has_identity_error(_scan_definition_id_duplicates(pack_ids), "DUPLICATE_DEFINITION_LEVEL_ID"), "duplicate internal level ids are rejected")
+
+	# 5) distinct internal ids across distinct files -> clean.
+	var clean := {
+		"a.json": _identity_definition(&"id_a"),
+		"b.json": _identity_definition(&"id_b"),
+	}
+	check_eq(_scan_definition_id_duplicates(clean).size(), 0, "distinct internal ids are clean")
+
+
+## Minimal definition carrying only the identity field under test.
+func _identity_definition(level_id: StringName) -> LevelDefinition:
+	var definition := LevelDefinition.new()
+	definition.level_id = level_id
+	return definition
+
+
+## In-test duplicate scan over a `filename -> LevelDefinition` pack, mirroring the
+## production duplicate rule in isolation (identity mismatch is covered
+## separately above), without touching production content files.
+func _scan_definition_id_duplicates(pack: Dictionary) -> PackedStringArray:
+	var errors := PackedStringArray()
+	var seen := {}
+	for file_name in pack:
+		var definition: LevelDefinition = pack[file_name]
+		var definition_id := String(definition.level_id)
+		if seen.has(definition_id):
+			errors.append("DUPLICATE_DEFINITION_LEVEL_ID:%s" % definition_id)
+		seen[definition_id] = true
+	return errors
+
+
+func _has_identity_error(errors: PackedStringArray, code_prefix: String) -> bool:
+	for error in errors:
+		if error.begins_with(code_prefix):
 			return true
 	return false
