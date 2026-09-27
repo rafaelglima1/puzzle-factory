@@ -139,10 +139,14 @@ project.godot (main_scene) -> TrafficM3AppController
     -> presenter binding (adapter/router, official event vocabulary)
 ```
 
-Persistence (`game/persistence/m3_progress_store.gd`) is generic infrastructure
-(product-free, guarded by `architecture_test.gd`): one canonical JSON profile in
-`user://` with unlock/completion state, injectable path, corruption-safe
-defaults. M10 replaces it with the robust save/migration system.
+Persistence (`game/persistence/**`) is generic infrastructure (product-free,
+guarded by `architecture_test.gd`): canonical JSON in `user://`, injectable
+paths, corruption-safe defaults. M3 ships `m3_progress_store.gd`
+(`user://m3_progress.json`, unlock/completion) and M4 adds
+`m4_presentation_settings_store.gd`
+(`user://m4_presentation_settings.json`, Music/Sound/Haptics switches) — two
+separate documents read only by the integration layer. M10 replaces both with
+the robust save/migration system and a consolidated `settings` block.
 
 Station board anchors (cell/footprint) live in generic `Destination.metadata`
 as product composition data, so core stays agnostic while presentation gets
@@ -205,12 +209,22 @@ Implemented:
   real tapping → win/fail → retry/next over ten levels) instead of the M0
   placeholder. The shell owns all presentation; the controller owns product
   navigation and forwards intents/signals only.
+- **M4 (both halves + integration):** presentation UX/juice (feedback, eased
+  movement, bounded completion/failure sequences with a deferred result reveal,
+  transitions, procedural audio through a bounded 8-player pool, haptic
+  priority/cooldown, Settings screen) plus the infrastructure it needs:
+  `M4PresentationSettingsStore` (`game/persistence/`, product-free) and the real
+  `game/default_bus_layout.tres` (`Master → Music / SFX / UI`). The integration
+  pass wires persistence into the composition root: the controller owns the
+  settings store, loads it before the shell is shown, applies the persisted
+  values before `show_main_menu()`, and persists Settings toggles. Presentation
+  still imports no persistence; the store imports no presentation.
 
 Deferred:
 
 | Concern | Milestone |
 |---|---|
-| Juice/audio/haptics implementation, settings persistence | M4 |
+| Production music/SFX assets, volume sliders, locale | M4 polish / later |
 | Level schema/loader/validator/migrations, obstacles; replaces the M3 catalogue | M5 |
 | Solver + state hashing, difficulty analyzer, generator | M6–M8 |
 | Robust progression/coins/save/migration (replaces `M3ProgressStore`) | M10 |

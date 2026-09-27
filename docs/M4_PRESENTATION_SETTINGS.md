@@ -161,23 +161,52 @@ representation; the store is the durable side.
 
 The presentation layer must **not** import `game/persistence/**`
 (`presentation_boundary_test.gd`). Wiring goes through the integration layer,
-which reads the store and calls presentation with plain values:
+which reads the store and calls presentation with plain values.
+
+### Wired integration (M4)
+
+`TrafficM3AppController` (`game/integration/traffic/`) is the app composition
+root and now **owns the settings store** (`M4PresentationSettingsStore`). The
+tree is:
 
 ```text
-M4PresentationSettingsStore (persistence)
-        │  music_enabled() / sound_enabled() / haptics_enabled()
+M4PresentationSettingsStore (persistence, product-free)
+        │  startup: load_settings()  →  music_enabled()/sound_enabled()/haptics_enabled()
         ▼
-integration layer (game/integration/traffic/**, ADR-013)
-        │  presenter.audio.set_enabled(...)  presenter.haptics.set_enabled(...)
-        │  (existing AGENT-2 hooks, no boundary breach)
+TrafficM3AppController (integration, ADR-013)
+        │  startup: shell.apply_presentation_settings(music, sound, haptics) BEFORE show_main_menu()
+        │  toggles:  music_enabled_changed/sound_enabled_changed/haptics_enabled_changed
+        │            → store.set_*_enabled(value)  (persist only; the shell already applied runtime)
         ▼
-presentation
+M3FirstPlayable shell → TrafficPresenter → PresentationAudio / HapticService
 ```
 
-Existing AGENT-2 hooks the integration pass can use today, without editing
-AGENT-2 files: `TrafficPresenter.audio.set_enabled(bool)` and
-`TrafficPresenter.haptics.set_enabled(bool)`, reachable from the app composition
-root via `get_presenter()`.
+Startup order (no flash of the enabled defaults, so a persisted OFF choice can
+never emit a sound or a vibration):
+
+```text
+controller.start()
+  → store = M4PresentationSettingsStore.new(presentation_settings_path)
+  → store.load_settings()
+  → shell built
+  → shell.apply_presentation_settings(store.music_enabled(), store.sound_enabled(), store.haptics_enabled())
+  → shell.show_main_menu()
+```
+
+`presentation_settings_path` is injectable (defaults to
+`M4PresentationSettingsStore.DEFAULT_PATH`) exactly like `progress_path`, so the
+integration tests use temporary files.
+
+The controller does **not** connect `settings_requested`: the shell navigates the
+settings screen itself, so wiring it would double-fire one intent.
+
+**I/O failure semantics.** The store mutates memory first and then writes, so a
+non-OK setter result means the runtime keeps the player's choice while disk may
+still hold the old value. The controller keeps the choice active, records the
+error (`last_settings_save_error()`), warns, and continues — never a crash,
+never a silent success claim, no retry queue (M10 owns robust persistence).
+Load diagnostics are available through `last_settings_load_error()` and are
+never surfaced to the player in M4.
 
 ## 7. Explicit deferrals
 
@@ -190,11 +219,10 @@ root via `get_presenter()`.
   `settings` block inside the versioned save with backup/migration/recovery.
   This file is expected to be folded into that block at M10; the store is
   deliberately small so the fold is trivial.
-- **M4 cross-integration.** Connecting the settings screen toggles to this store
-  and applying the values to the presenter is the `integration/m4` task.
-- **Actual haptic disable.** Enabling/disabling *persistence* is proven here;
-  that hardware feedback obeys the setting is proven only by AGENT-2's
-  implementation plus the M4 integration.
+- **Volumes / locale / graphics.** Not shipped in M4 (see the first bullet).
+- **Actual haptic disable.** The persistence + runtime gate are wired and proven
+  headlessly here; that physical hardware feedback obeys the setting is
+  validated by the M4 integration device smoke test.
 
 ## 8. Tests
 
@@ -205,6 +233,13 @@ game/tests/m4_presentation_settings_store_test.gd   defaults, immediate + explic
                                                     fixtures, deterministic serialization
 game/tests/audio_bus_test.gd                        Master/Music/SFX/UI exist at runtime,
                                                     children route to Master, 0 dB, unmuted
+game/tests/m4_cross_integration_test.gd             real controller/session/shell/presenter:
+                                                    defaults, toggle+persist via the Settings
+                                                    UI, app-restart restore, malformed settings,
+                                                    I/O failure, accepted-move valid-move SFX
+                                                    once, blocked move with Sound/Haptics off,
+                                                    deferred completion/failure, 350 ms result
+                                                    guard, bus routing, recreate/no-growth
 ```
 
 Run: `powershell -File scripts/run_tests.ps1`.

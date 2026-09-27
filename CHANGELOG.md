@@ -6,6 +6,37 @@ versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — M4 UX / juice + presentation settings integration
+
+- Presentation UX/juice (AGENT-2): immediate tap acknowledgement, eased movement,
+  blocked/rejected caution feedback, staging-pressure feedback, match/loading/
+  objective polish, bounded completion/failure sequences with a **deferred result
+  reveal** (gameplay stays visible, the result appears only after the sequence
+  finishes or is safely skipped), bounded screen transitions, procedural audio
+  routed through a bounded 8-player pool, haptic priority/cooldown, and a
+  Settings screen (Music / Sound / Haptics, each OFF-capable). The M3 350 ms
+  result-input guard is preserved.
+- Presentation settings infrastructure (AGENT-1): `M4PresentationSettingsStore`
+  (`game/persistence/`, product-free) persisting `music_enabled`/`sound_enabled`/
+  `haptics_enabled` at `user://m4_presentation_settings.json`, plus the real Godot
+  audio bus layout `game/default_bus_layout.tres` (`Master → Music / SFX / UI`)
+  wired from `game/project.godot`.
+- M4 integration (`integration/m4`): `TrafficM3AppController` now owns the
+  settings store, loads it before the shell is shown, applies the persisted
+  values to the shell/presenter _before_ `show_main_menu()` (no flash of the
+  enabled defaults), and persists Settings toggles through the shell's
+  `music_enabled_changed` / `sound_enabled_changed` / `haptics_enabled_changed`
+  intents. A persistence failure keeps the runtime choice active, records the
+  error (`last_settings_save_error()`), warns, and continues (no retry queue —
+  M10 owns robust persistence). Partial-start teardown is now leak-free.
+
+### Fixed — valid-move feedback seam (M4)
+
+- `SFX_VALID_MOVE` was declared, generated and registered but never played. It is
+  now requested exactly once on the authoritative `entity_move_started` event —
+  never on the pre-validation tap, and never for `entity_blocked` or
+  `command_rejected`. Presentation-only; it cannot alter the simulation result.
+
 ### Added — M3 first playable integration (app composition + startup)
 
 - `TrafficM3AppController` (`game/integration/traffic/` + `.tscn`): the app

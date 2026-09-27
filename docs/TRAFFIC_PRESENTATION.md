@@ -158,14 +158,35 @@ win effect, fail STAGING_FULL, fail NO_VALID_MOVES
 `layout_for(viewport)` is validated at 16:9 and 20:9 headlessly; the sandbox
 never becomes production startup.
 
-## 11. Audio integration note (integration-owned)
+## 11. Audio integration note (now implemented for M4)
 
 `audio_contract.gd` declares the buses (`Master / Music / SFX / UI`) and the
-ten required SFX classes; `PresentationAudio` is a safe no-op without streams.
-The actual Audio Bus layout lives in `game/project.godot`
-(AGENT-1/integration-owned), so it is **documented, not modified** here.
-Required M4 step: add the bus layout, register original/approved streams,
-route playback through pooled players on `bus_for(sfx)`.
+ten required SFX classes. The real Godot Audio Bus layout now ships at
+`game/default_bus_layout.tres`, referenced from `game/project.godot`
+(`[audio] buses/default_bus_layout`) by the AGENT-1/integration pass, and
+`game/tests/audio_bus_test.gd` asserts the runtime buses through `AudioServer`.
+
+M4 `PresentationAudio` plays generated procedural streams (no binary assets)
+through a bounded **8-player pool** hosted by the presenter, on the bus from
+`Contract.bus_for(sfx)`; `Music` has a dedicated single player and a gate (no
+music asset ships in M4). Requests are counted so headless tests never need a
+real device; `Sound OFF` makes `play()` a safe no-op and `Haptics OFF` makes
+`HapticService.trigger()` a no-op.
+
+M4 interaction feedback boundary (presentation only):
+
+```text
+tap                 → acknowledge_tap        → tap (UI)         + light haptic
+entity_move_started → animate_path           → valid_move (SFX) [exactly once]
+entity_moved        → settle to authoritative cell
+entity_blocked      → show_blocked           → blocked_move     + warning haptic
+command_rejected    → show_command_rejected  → blocked_move (softer pitch)
+item_loaded/match/objective_completed → loading / match / combo (+ light haptic)
+game_completed/game_failed → bounded completion/failure sequence, then the result
+```
+
+`valid_move` is requested only on the authoritative `entity_move_started` event —
+never on the pre-validation tap, the blocked case or a rejected command.
 
 ## 12. Tests
 
@@ -293,6 +314,25 @@ win/final/fail results, debug selector zero-based + gating, responsive).
 Not implemented in M3 (M4+): production juice, new audio/haptics systems,
 settings persistence, transitions framework, final particles, coins, boosters,
 ads, IAP, daily rewards, analytics, store SDKs.
+
+## 16. M4 UX / juice + integration (AGENT-2 implementation, AGENT-1 wiring)
+
+AGENT-2 added the M4 presentation layer: tap/valid/blocked/rejected feedback,
+eased movement, staging-pressure feedback, match/loading/objective polish,
+bounded completion/failure sequences with a **deferred result reveal** (gameplay
+stays visible, the result appears only after the sequence finishes or is safely
+skipped), bounded screen transitions, procedural audio with the 8-player pool,
+haptic priority/cooldown, and a Settings screen (Music / Sound / Haptics). The
+M3 350 ms result-input guard in `result_screen.gd` is preserved.
+
+The M4 integration pass (AGENT-1, `integration/m4`) wired persistence into the
+real app: `TrafficM3AppController` owns `M4PresentationSettingsStore`, loads it
+before the shell is shown, applies the persisted values to the shell/presenter
+_before_ `show_main_menu()`, and persists the Settings toggles. See
+`docs/M4_PRESENTATION_SETTINGS.md` §6 and `game/tests/m4_cross_integration_test.gd`.
+
+Not implemented in M4: production music, volume sliders, locale, coins,
+boosters, ads, IAP, analytics, store SDKs, robust save/migration (M10).
 
 ## 16. M4 UX / juice (AGENT-2)
 

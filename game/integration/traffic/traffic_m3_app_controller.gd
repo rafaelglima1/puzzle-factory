@@ -30,6 +30,9 @@ const SHELL_SCENE := preload("res://themes/traffic/m3/m3_first_playable.tscn")
 
 ## Persistence path for the M3 profile (tests inject a temporary path).
 var progress_path: String = M3ProgressStore.DEFAULT_PATH
+## Persistence path for the M4 presentation preferences (Music/Sound/Haptics).
+## Separate document from the progress profile; tests inject a temporary path.
+var presentation_settings_path: String = M4PresentationSettingsStore.DEFAULT_PATH
 ## Debug tooling gate applied to the shell. Defaults to the build type so the
 ## level selector is hidden in release exports (blueprint §67/§68).
 var debug_enabled: bool = OS.is_debug_build()
@@ -38,6 +41,10 @@ var fallback_viewport: Vector2 = Vector2(1080, 1920)
 
 var _shell: Node = null
 var _session: TrafficFirstPlayableSession = null
+## M4 player preferences. Owned here (the app composition root): presentation
+## reads none of it directly and persistence imports none of the presentation.
+var _settings: M4PresentationSettingsStore = null
+var _last_settings_save_error: Error = OK
 var _started := false
 var _last_session_error: StringName = &""
 var _last_unlock_notice := 0
@@ -57,6 +64,15 @@ func _exit_tree() -> void:
 func start() -> bool:
 	if _started:
 		return true
+	# M4 preferences load before the shell is shown so the menu never flashes the
+	# enabled defaults: the persisted values are applied to the shell (and through
+	# it to the presenter) before the first screen appears, so a persisted OFF
+	# choice can never emit a sound or a haptic. Missing/malformed files fall back
+	# to defaults with a retained diagnostic — never a crash, never shown to the
+	# player (M4 scope).
+	_settings = M4PresentationSettingsStore.new(presentation_settings_path)
+	_settings.load_settings()
+
 	_shell = SHELL_SCENE.instantiate()
 	if _shell == null:
 		push_error("TrafficM3AppController: M3 shell scene failed to instantiate")
@@ -67,11 +83,18 @@ func start() -> bool:
 	# in a tree, so build explicitly (build() is idempotent).
 	_shell.call("build")
 	_shell.set("debug_enabled", debug_enabled)
+	_shell.call(
+		"apply_presentation_settings",
+		_settings.music_enabled(),
+		_settings.sound_enabled(),
+		_settings.haptics_enabled()
+	)
 
 	_session = TrafficFirstPlayableSession.new(M3ProgressStore.new(progress_path))
 	_wire()
 	if not _session.bind_presentation(_shell.call("get_traffic_presenter")):
 		push_error("TrafficM3AppController: presenter binding failed")
+		_teardown()
 		return false
 
 	# Production start-up always initializes the shell through show_main_menu()
@@ -86,8 +109,17 @@ func start() -> bool:
 
 ## Releases session wiring and frees the shell. Safe to call more than once.
 func shutdown() -> void:
-	if not _started:
+	if _shell == null and _session == null:
 		return
+	_teardown()
+	_started = false
+
+
+## Shared teardown for both shutdown and a failed start (so a partially started
+## controller never leaks the shell/session or the viewport subscription).
+func _teardown() -> void:
+	if is_inside_tree() and _shell != null and get_viewport().size_changed.is_connected(_on_viewport_resized):
+		get_viewport().size_changed.disconnect(_on_viewport_resized)
 	if _session != null:
 		_session.dispose()
 		_session = null
@@ -97,7 +129,6 @@ func shutdown() -> void:
 			remove_child(_shell)
 		_shell.free()
 		_shell = null
-	_started = false
 
 
 func is_started() -> bool:
@@ -132,6 +163,24 @@ func last_unlock_notice() -> int:
 	return _last_unlock_notice
 
 
+## M4 presentation preferences store (read-only view for tests/diagnostics).
+func get_settings_store() -> M4PresentationSettingsStore:
+	return _settings
+
+
+## Load diagnostic for the startup read (M4 never surfaces it to the player).
+func last_settings_load_error() -> int:
+	if _settings == null:
+		return M4PresentationSettingsStore.LoadError.NONE
+	return _settings.last_load_error
+
+
+## Result of the most recent settings persistence attempt (OK when the last
+## toggle wrote successfully or was a no-op).
+func last_settings_save_error() -> Error:
+	return _last_settings_save_error
+
+
 ## Frame drive for headless callers. In a tree the presenter self-drives
 ## through `_process`, so this is a no-op there (never double-advance).
 func advance(delta: float) -> void:
@@ -158,6 +207,13 @@ func _wire() -> void:
 	_shell.connect(&"next_requested", _on_next_requested)
 	_shell.connect(&"menu_requested", _on_menu_requested)
 	_shell.connect(&"debug_level_selected", _on_debug_level_selected)
+	# M4: the shell already applied the player's choice to the runtime; the
+	# controller only persists it. `settings_requested` is intentionally NOT
+	# connected — the shell navigates the settings screen itself, and wiring it
+	# here would double-fire that navigation.
+	_shell.connect(&"music_enabled_changed", _on_music_enabled_changed)
+	_shell.connect(&"sound_enabled_changed", _on_sound_enabled_changed)
+	_shell.connect(&"haptics_enabled_changed", _on_haptics_enabled_changed)
 
 	_session.level_started.connect(_on_level_started)
 	_session.level_restarted.connect(_on_level_restarted)
@@ -194,6 +250,37 @@ func _on_menu_requested() -> void:
 
 func _on_debug_level_selected(level_index: int) -> void:
 	_session.debug_select_level(level_index)
+
+
+# --- M4 settings persistence (shell intent -> store) ---------------------------
+
+func _on_music_enabled_changed(value: bool) -> void:
+	if _settings == null:
+		return
+	_record_settings_save(_settings.set_music_enabled(value))
+
+
+func _on_sound_enabled_changed(value: bool) -> void:
+	if _settings == null:
+		return
+	_record_settings_save(_settings.set_sound_enabled(value))
+
+
+func _on_haptics_enabled_changed(value: bool) -> void:
+	if _settings == null:
+		return
+	_record_settings_save(_settings.set_haptics_enabled(value))
+
+
+## The store mutates memory first and then attempts the write, so a non-OK
+## result means: runtime keeps the player's choice, disk may still hold the old
+## value. M4 keeps the choice active and retains the error for diagnostics —
+## never a crash, never a silent success claim, no retry queue (M10 owns robust
+## persistence).
+func _record_settings_save(error: Error) -> void:
+	_last_settings_save_error = error
+	if error != OK:
+		push_warning("TrafficM3AppController: M4 presentation settings save failed (error %d)" % error)
 
 
 # --- session wiring (session -> shell) -----------------------------------------

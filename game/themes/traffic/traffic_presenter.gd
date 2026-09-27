@@ -510,6 +510,11 @@ func handle_event(event_type: StringName, payload: Dictionary, entity_provider: 
 					RouterScript.payload_position(payload, "to"),
 				]
 			animate_path(started_id, path_cells)
+			# The authoritative accepted-move boundary. This is the one place a
+			# `valid_move` cue is requested: never on the pre-validation tap,
+			# never for `entity_blocked` or `command_rejected`. Presentation
+			# only — the simulation already decided legality before this event.
+			audio.play(AudioContractScript.SFX_VALID_MOVE)
 			return true
 		RouterScript.ENTITY_MOVED:
 			var moved_id := RouterScript.payload_entity_id(payload)
