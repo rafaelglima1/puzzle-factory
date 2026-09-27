@@ -16,6 +16,13 @@ var entity_data: EntityData = null
 var pressure: StringName = StagingData.PRESSURE_NORMAL
 
 var _palette: PaletteScript = PaletteScript.new()
+var _pulse := 0.0
+
+
+## Bounded pressure pulse strength in [0, 1] (driven by StagingView.advance).
+func set_pulse(strength: float) -> void:
+	_pulse = clampf(strength, 0.0, 1.0)
+	queue_redraw()
 
 
 func set_pressure_state(state: StringName) -> void:
@@ -55,7 +62,12 @@ func _frame_color() -> Color:
 func _draw() -> void:
 	var rect := Rect2(Vector2.ZERO, size)
 	draw_rect(rect, SLOT_BG)
-	draw_rect(rect.grow(-2.0), _frame_color(), false, 3.0)
+	var frame := _frame_color()
+	var width := 3.0
+	if _pulse > 0.0:
+		frame = frame.lightened(0.35 * _pulse)
+		width = 3.0 + 2.5 * _pulse
+	draw_rect(rect.grow(-2.0), frame, false, width)
 	if not occupied:
 		return
 	var center := rect.get_center()

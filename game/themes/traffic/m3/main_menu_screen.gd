@@ -7,10 +7,12 @@ const Strings := preload("res://themes/traffic/m3/m3_strings.gd")
 
 signal play_pressed
 signal level_select_pressed
+signal settings_pressed
 
 var _title: Label = null
 var _play: Button = null
 var _level_select: Button = null
+var _settings: Button = null
 var _debug_visible := false
 
 
@@ -45,6 +47,13 @@ func build() -> void:
 	_level_select.visible = _debug_visible
 	add_child(_level_select)
 
+	_settings = Button.new()
+	_settings.name = "SettingsButton"
+	_settings.text = Strings.text(&"ui.settings")
+	Style.apply_button(_settings, &"neutral")
+	_settings.pressed.connect(_on_settings_pressed)
+	add_child(_settings)
+
 
 ## Debug entry point visibility. Production keeps it hidden (blueprint §67/§68).
 func set_debug_visible(value: bool) -> void:
@@ -63,6 +72,14 @@ func press_play() -> void:
 
 func press_level_select() -> void:
 	level_select_pressed.emit()
+
+
+func press_settings() -> void:
+	settings_pressed.emit()
+
+
+func settings_button_visible() -> bool:
+	return _settings != null and _settings.visible
 
 
 func play_button_visible() -> bool:
@@ -89,6 +106,8 @@ func layout_for(viewport: Vector2) -> void:
 	_play.size = Vector2(button_width, Style.TOUCH_TARGET)
 	_level_select.position = Vector2(left + Style.SAFE, center_y + Style.TOUCH_TARGET + Style.SPACING)
 	_level_select.size = Vector2(button_width, Style.TOUCH_TARGET)
+	_settings.position = Vector2(left + Style.SAFE, center_y + (Style.TOUCH_TARGET + Style.SPACING) * 2.0)
+	_settings.size = Vector2(button_width, Style.TOUCH_TARGET)
 
 
 func _on_play_pressed() -> void:
@@ -97,3 +116,7 @@ func _on_play_pressed() -> void:
 
 func _on_level_select_pressed() -> void:
 	level_select_pressed.emit()
+
+
+func _on_settings_pressed() -> void:
+	settings_pressed.emit()

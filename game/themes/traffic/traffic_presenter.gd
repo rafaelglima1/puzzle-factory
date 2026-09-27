@@ -62,6 +62,13 @@ const RESULT_LOCK_CAP := 2.0
 const MAX_DURATION_WIN := 2.0
 const MAX_DURATION_FAIL := 1.5
 
+## M4 juice bounds (all presentation-only and deterministic).
+const TAP_ACK_DURATION := 0.1
+const PULSE_DURATION := 0.22
+const PULSE_SCALE := 0.1
+const MAX_ACTIVE_MATCH_EFFECTS := 6
+const MAX_ACTIVE_BLOCKED_INDICATORS := 4
+
 const SAFE_MARGIN := 24.0
 const HUD_BAND := 120.0
 const STAGING_BAND := 140.0
@@ -92,6 +99,14 @@ var _active_sequence: StringName = &""
 var _blocker_ids: Array[StringName] = []
 var _blocker_flash_remaining := 0.0
 var _built := false
+
+## M4 runtime state (presentation-only).
+var audio_host: Node = null
+var _tap_ack_ids: Array[StringName] = []
+var _tap_ack_remaining := 0.0
+var _pulses: Dictionary = {}
+var _active_match_effects := 0
+var _active_blocked_indicators := 0
 
 
 func _ready() -> void:
@@ -124,6 +139,14 @@ func build() -> void:
 	effects_layer = Node2D.new()
 	effects_layer.name = "EffectsLayer"
 	add_child(effects_layer)
+
+	# Bounded AudioStreamPlayer pool hosted in the scene tree. Headless/off-tree
+	# presenters keep the pool inactive (play requests are still counted).
+	audio_host = Node.new()
+	audio_host.name = "AudioHost"
+	add_child(audio_host)
+	audio.bind_host(audio_host)
+	audio.ensure_default_streams()
 
 	_movement_controller = MovementControllerScript.new()
 	_movement_controller.name = "MovementController"
@@ -208,6 +231,72 @@ func entity_at_board_point(point: Vector2, min_touch: float = 0.0) -> StringName
 	return board_view.entity_at(point, min_touch)
 
 
+## Immediate, presentation-only tap acknowledgement (M4): a brief highlight plus
+## tap sound and light haptic. It does NOT imply the move is legal — the
+## simulation still decides, and blocked/rejected feedback follows if needed.
+func acknowledge_tap(entity_id: StringName) -> bool:
+	_ensure_built()
+	if entity_id == &"":
+		return false
+	var acknowledged := false
+	if board_view.set_entity_selected(entity_id, true):
+		if not _tap_ack_ids.has(entity_id):
+			_tap_ack_ids.append(entity_id)
+		_tap_ack_remaining = TAP_ACK_DURATION
+		acknowledged = true
+	haptics.trigger(HapticServiceScript.LIGHT)
+	audio.play(AudioContractScript.SFX_TAP)
+	return acknowledged
+
+
+# --- Presentation settings (applied immediately; persistence is integration) --
+
+func apply_presentation_settings(music: bool, sound: bool, haptics_enabled: bool) -> void:
+	_ensure_built()
+	audio.set_music_enabled(music)
+	audio.set_sound_enabled(sound)
+	haptics.set_enabled(haptics_enabled)
+
+
+func set_sound_enabled(value: bool) -> void:
+	_ensure_built()
+	audio.set_sound_enabled(value)
+
+
+func set_music_enabled(value: bool) -> void:
+	_ensure_built()
+	audio.set_music_enabled(value)
+
+
+func set_haptics_enabled(value: bool) -> void:
+	_ensure_built()
+	haptics.set_enabled(value)
+
+
+func is_sound_enabled() -> bool:
+	return audio != null and audio.is_sound_enabled()
+
+
+func is_music_enabled() -> bool:
+	return audio != null and audio.is_music_enabled()
+
+
+func is_haptics_enabled() -> bool:
+	return haptics != null and haptics.is_enabled()
+
+
+func active_match_effects() -> int:
+	return _active_match_effects
+
+
+func active_blocked_indicators() -> int:
+	return _active_blocked_indicators
+
+
+func audio_pool_size() -> int:
+	return audio.pool_size() if audio != null else 0
+
+
 ## Interpolates along an externally supplied cell path. Never validates it.
 func animate_path(entity_id: StringName, path_cells: Array, max_duration: float = -1.0) -> float:
 	_ensure_built()
@@ -240,33 +329,42 @@ func animate_path(entity_id: StringName, path_cells: Array, max_duration: float 
 func show_blocked(entity_id: StringName, axis: Vector2 = Vector2.RIGHT, blocker_ids: Array = []) -> float:
 	_ensure_built()
 	var view: Node2D = board_view.entity_view(entity_id)
-	var indicator: Node2D = BlockedIndicatorScript.new()
-	indicator.name = "BlockedIndicator"
-	add_child(indicator)
-	if view != null:
-		indicator.position = board_view.position + view.position
-	indicator.connect(&"finished", func() -> void: indicator.queue_free())
-	last_blocked_duration = indicator.play(axis)
-	_flash_blockers(blocker_ids)
+	if _active_blocked_indicators < MAX_ACTIVE_BLOCKED_INDICATORS:
+		_active_blocked_indicators += 1
+		var indicator: Node2D = BlockedIndicatorScript.new()
+		indicator.name = "BlockedIndicator"
+		add_child(indicator)
+		if view != null:
+			indicator.position = board_view.position + view.position
+		indicator.connect(&"finished", _release_blocked_indicator.bind(indicator))
+		last_blocked_duration = indicator.play(axis)
+	else:
+		last_blocked_duration = BlockedIndicatorScript.DEFAULT_DURATION
+	# Highlight the blocked entity together with the entities blocking it.
+	var flash_ids: Array = [entity_id]
+	flash_ids.append_array(blocker_ids)
+	_flash_blockers(flash_ids)
 	haptics.trigger(HapticServiceScript.WARNING)
 	audio.play(AudioContractScript.SFX_BLOCKED_MOVE)
 	return last_blocked_duration
 
 
-## Generic invalid-action feedback. Raw status/code are kept for debug only and
-## are never shown to users (blueprint §58).
+## Generic invalid-action feedback. Softer than a blocked move and distinctly
+## different (small nudge, lower sound). Raw status/code stay debug-only and are
+## never surfaced to users (blueprint §58).
 func show_command_rejected(entity_id: StringName, status: StringName, code: StringName) -> void:
 	_ensure_built()
 	last_rejection = {"entity_id": String(entity_id), "status": String(status), "code": String(code)}
 	var view: Node2D = board_view.entity_view(entity_id) if entity_id != &"" else null
-	if view != null:
+	if view != null and _active_blocked_indicators < MAX_ACTIVE_BLOCKED_INDICATORS:
+		_active_blocked_indicators += 1
 		var indicator: Node2D = BlockedIndicatorScript.new()
 		indicator.name = "RejectedIndicator"
 		add_child(indicator)
 		indicator.position = board_view.position + view.position
-		indicator.connect(&"finished", func() -> void: indicator.queue_free())
-		indicator.play(Vector2.RIGHT, BlockedIndicatorScript.MAX_DURATION)
-	audio.play(AudioContractScript.SFX_BLOCKED_MOVE)
+		indicator.connect(&"finished", _release_blocked_indicator.bind(indicator))
+		indicator.play(Vector2.RIGHT, 0.12, 5.0)
+	audio.play(AudioContractScript.SFX_BLOCKED_MOVE, 0.8)
 
 
 # --- Destination / queue ----------------------------------------------------
@@ -306,6 +404,7 @@ func show_item_loaded(destination_id: StringName, color_key: StringName = &"COLO
 	if view == null:
 		return false
 	_spawn_match_at(board_view.position + view.position, color_key)
+	_pulse_view(view)
 	audio.play(AudioContractScript.SFX_LOADING)
 	return true
 
@@ -322,6 +421,7 @@ func show_match(target_id: StringName, color_key: StringName = &"") -> bool:
 		var data: Variant = view.get_data()
 		resolved_key = data.color_key if data != null and "color_key" in data else &"COLOR_A"
 	_spawn_match_at(board_view.position + view.position, resolved_key)
+	_pulse_view(view)
 	haptics.trigger(HapticServiceScript.LIGHT)
 	audio.play(AudioContractScript.SFX_MATCH)
 	return true
@@ -330,6 +430,7 @@ func show_match(target_id: StringName, color_key: StringName = &"") -> bool:
 func show_objective_complete(objective_id: StringName = &"") -> bool:
 	_ensure_built()
 	hud_shell.flash_objective()
+	audio.play(AudioContractScript.SFX_COMBO, 0.9)
 	objective_presented.emit(objective_id)
 	return true
 
@@ -496,7 +597,10 @@ func advance(delta: float) -> void:
 	if input_gate.is_locked():
 		input_gate.tick(delta)
 	hud_shell.advance(delta)
+	staging_view.advance(delta)
 	_tick_blocker_flash(delta)
+	_tick_tap_ack(delta)
+	_tick_pulses(delta)
 	if not is_inside_tree():
 		if _movement_active:
 			_movement_controller.update(delta)
@@ -521,6 +625,9 @@ func input_lock_remaining() -> float:
 func teardown() -> void:
 	if not _built:
 		return
+	if audio != null:
+		audio.detach_host()
+	audio_host = null
 	input_gate.release_all()
 	_movement_controller.stop()
 	_movement_active = false
@@ -529,6 +636,9 @@ func teardown() -> void:
 	_blocker_ids.clear()
 	_blocker_flash_remaining = 0.0
 	_pending_removals.clear()
+	_tap_ack_ids.clear()
+	_tap_ack_remaining = 0.0
+	_pulses.clear()
 	for child: Node in get_children():
 		remove_child(child)
 		child.free()
@@ -630,11 +740,63 @@ func _clear_active_effect() -> void:
 
 
 func _spawn_match_at(world_position: Vector2, color_key: StringName) -> void:
+	if _active_match_effects >= MAX_ACTIVE_MATCH_EFFECTS:
+		return
+	_active_match_effects += 1
 	var effect: Node2D = MatchEffectScript.new()
 	effect.name = "MatchEffect"
 	effects_layer.add_child(effect)
-	effect.connect(&"finished", func() -> void: effect.queue_free())
+	effect.connect(&"finished", _release_match_effect.bind(effect))
 	effect.call(&"play", world_position, color_key)
+
+
+func _release_blocked_indicator(indicator: Node) -> void:
+	_active_blocked_indicators = maxi(_active_blocked_indicators - 1, 0)
+	if is_instance_valid(indicator):
+		indicator.queue_free()
+
+
+func _release_match_effect(effect: Node) -> void:
+	_active_match_effects = maxi(_active_match_effects - 1, 0)
+	if is_instance_valid(effect):
+		effect.queue_free()
+
+
+func _tick_tap_ack(delta: float) -> void:
+	if _tap_ack_remaining <= 0.0:
+		return
+	_tap_ack_remaining = maxf(_tap_ack_remaining - delta, 0.0)
+	if _tap_ack_remaining <= 0.0:
+		for entity_id in _tap_ack_ids:
+			board_view.set_entity_selected(entity_id, false)
+		_tap_ack_ids.clear()
+
+
+## Brief scale pulse on a board view (match/loading feedback).
+func _pulse_view(view: Node2D) -> void:
+	if view == null or not is_instance_valid(view):
+		return
+	_pulses[view] = PULSE_DURATION
+
+
+func _tick_pulses(delta: float) -> void:
+	if _pulses.is_empty():
+		return
+	var finished: Array = []
+	for view: Variant in _pulses.keys():
+		var remaining: float = float(_pulses[view]) - delta
+		var node := view as Node2D
+		if node == null or not is_instance_valid(node) or remaining <= 0.0:
+			if node != null and is_instance_valid(node):
+				node.scale = Vector2.ONE
+			finished.append(view)
+			continue
+		_pulses[view] = remaining
+		var progress := 1.0 - remaining / PULSE_DURATION
+		var scale := 1.0 + sin(progress * PI) * PULSE_SCALE
+		node.scale = Vector2(scale, scale)
+	for view: Variant in finished:
+		_pulses.erase(view)
 
 
 func _flash_blockers(blocker_ids: Array) -> void:

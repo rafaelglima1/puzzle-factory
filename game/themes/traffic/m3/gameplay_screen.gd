@@ -111,6 +111,9 @@ func handle_tap_at(board_point: Vector2) -> StringName:
 	var entity_id: StringName = presenter.entity_at_board_point(board_point, Style.TOUCH_TARGET)
 	if entity_id == &"":
 		return &""
+	# Immediate presentation-only acknowledgement (highlight + tap sound +
+	# light haptic). The simulation still decides the move's validity.
+	presenter.acknowledge_tap(entity_id)
 	entity_tapped.emit(entity_id)
 	return entity_id
 

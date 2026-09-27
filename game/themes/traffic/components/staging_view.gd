@@ -10,11 +10,14 @@ const SlotScript := preload("res://themes/traffic/components/staging_slot_view.g
 
 const SLOT_MIN_SIZE := Vector2(64.0, 64.0)
 const SLOT_SEPARATION := 10
+const PULSE_DURATION := 0.35
 
 var data: DataScript = null
 
 var _row: HBoxContainer = null
 var _slot_nodes: Array = []
+var _pulse_remaining := 0.0
+var _last_pressure: StringName = DataScript.PRESSURE_NORMAL
 
 
 func _init() -> void:
@@ -46,9 +49,34 @@ func get_slot_nodes() -> Array:
 func set_pressure(state: StringName) -> void:
 	if data == null:
 		return
+	var previous := _last_pressure
 	data.pressure = state
+	_last_pressure = state
+	if state != previous and (state == DataScript.PRESSURE_WARNING or state == DataScript.PRESSURE_FULL):
+		_pulse_remaining = PULSE_DURATION
 	_apply_pressure()
+	_apply_pulse_strength(_pulse_strength())
 	queue_redraw()
+
+
+## Bounded pressure pulse; driven by the presenter's advance/_process.
+func advance(delta: float) -> void:
+	if _pulse_remaining <= 0.0:
+		return
+	_pulse_remaining = maxf(_pulse_remaining - delta, 0.0)
+	_apply_pulse_strength(_pulse_strength())
+
+
+func _pulse_strength() -> float:
+	if _pulse_remaining <= 0.0:
+		return 0.0
+	return _pulse_remaining / PULSE_DURATION
+
+
+func _apply_pulse_strength(strength: float) -> void:
+	for slot: Variant in _slot_nodes:
+		if is_instance_valid(slot):
+			slot.set_pulse(strength)
 
 
 func pressure() -> StringName:
@@ -73,6 +101,9 @@ func _rebuild() -> void:
 			slot.set_entity(occupant)
 		_slot_nodes.append(slot)
 	_apply_pressure()
+	_pulse_remaining = 0.0
+	_apply_pulse_strength(0.0)
+	_last_pressure = pressure()
 
 
 func _apply_pressure() -> void:

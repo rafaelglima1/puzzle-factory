@@ -18,6 +18,15 @@ const DURATION_MS := {
 	SUCCESS: 45,
 }
 
+## Priority lets a stronger response upgrade a weaker one inside the cooldown
+## (e.g. a blocked WARNING right after a tap LIGHT), while still suppressing
+## rapid repeats of the same or weaker pattern.
+const PRIORITY := {
+	LIGHT: 0,
+	WARNING: 1,
+	SUCCESS: 2,
+}
+
 var enabled := true
 var cooldown_ms := 150
 
@@ -35,7 +44,9 @@ func trigger(pattern: StringName, now_ms: int = -1) -> bool:
 		return false
 	var now := now_ms if now_ms >= 0 else Time.get_ticks_msec()
 	if now - _last_time_ms < cooldown_ms:
-		return false
+		# Within the cooldown: only a strictly higher-priority pattern may pass.
+		if PRIORITY.get(pattern, -1) <= PRIORITY.get(last_pattern, -1):
+			return false
 	_last_time_ms = now
 	trigger_count += 1
 	last_pattern = pattern
@@ -46,6 +57,10 @@ func trigger(pattern: StringName, now_ms: int = -1) -> bool:
 
 func set_enabled(value: bool) -> void:
 	enabled = value
+
+
+func is_enabled() -> bool:
+	return enabled
 
 
 func reset_cooldown() -> void:
