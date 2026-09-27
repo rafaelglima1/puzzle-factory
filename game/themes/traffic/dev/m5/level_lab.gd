@@ -177,6 +177,36 @@ func reset_preview() -> void:
 	_refresh_status_text()
 
 
+## Re-renders the CURRENT level's board/runtime debug data from an updated
+## preview WITHOUT resetting solver metrics, the command list or the current
+## playback step. Used by the M5 cross-integration layer after a playback step so
+## the board reflects the real authoritative state. It never restarts playback
+## and never decides gameplay; it only redraws supplied plain data.
+func refresh_runtime_preview(preview: Dictionary) -> void:
+	_ensure_built()
+	if preview.is_empty():
+		return
+	if _levels.is_empty():
+		return
+	var validation: Variant = _model.validation
+	var solver: Variant = _model.solver
+	var entry: Dictionary = preview.duplicate(true)
+	_levels[_index] = entry
+	_model.load_preview(entry)
+	# Preserve solver/validation/commands/step: only the runtime board changes.
+	_model.set_validation(validation)
+	_model.set_solver(solver)
+	_view.set_board(_model.build_board_data())
+	_view.set_paths(_paths_for_view())
+	_view.set_info_text(_compose_info_text())
+	_refresh_validation_text()
+	_refresh_solver_text()
+	_view.set_queues_text(_compose_queues_text())
+	_view.set_staging_text(_compose_staging_text())
+	_view.set_objectives_text(_compose_objectives_text())
+	_refresh_status_text()
+
+
 func current_index() -> int:
 	return _index
 
