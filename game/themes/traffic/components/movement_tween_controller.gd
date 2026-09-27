@@ -70,6 +70,13 @@ func target_node() -> Node2D:
 	return _target
 
 
+## Fast response, ease-out arrival. Deterministic and bounded: t=1 maps to
+## exactly 1.0, so the entity always settles on the authoritative endpoint.
+static func _ease_out(t: float) -> float:
+	var clamped := clampf(t, 0.0, 1.0)
+	return 1.0 - pow(1.0 - clamped, 3.0)
+
+
 func point_count() -> int:
 	return _points.size()
 
@@ -91,7 +98,7 @@ func _apply(t: float) -> void:
 	if _points.size() == 1 or _total <= 0.0:
 		_target.position = _points[0]
 		return
-	var distance := t * _total
+	var distance := _ease_out(t) * _total
 	var index := 1
 	while index < _cumulative.size() - 1 and _cumulative[index] < distance:
 		index += 1

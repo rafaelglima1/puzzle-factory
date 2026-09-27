@@ -26,10 +26,16 @@ func _ready() -> void:
 	set_process(playing)
 
 
-## Returns the granted (clamped) duration.
-func play(shake_axis: Vector2 = Vector2.RIGHT, max_duration: float = DEFAULT_DURATION) -> float:
+## Returns the granted (clamped) duration. `amplitude` lets the caller use a
+## softer nudge for generic rejections.
+func play(
+	shake_axis: Vector2 = Vector2.RIGHT,
+	max_duration: float = DEFAULT_DURATION,
+	amplitude: float = DEFAULT_AMPLITUDE
+) -> float:
 	duration = clampf(max_duration, 0.05, MAX_DURATION)
 	axis = shake_axis.normalized() if shake_axis.length() > 0.0 else Vector2.RIGHT
+	self.amplitude = clampf(amplitude, 1.0, 24.0)
 	_elapsed = 0.0
 	playing = true
 	set_process(true)
@@ -72,4 +78,6 @@ func _draw() -> void:
 	if blocker_flash <= 0.0:
 		return
 	var flash := Color(0.95, 0.25, 0.25, 0.65 * blocker_flash)
+	# M4: two concentric arcs give a clearer "blocked edge pulse".
 	draw_arc(Vector2.ZERO, 30.0, 0.0, TAU, 32, flash, 5.0, true)
+	draw_arc(Vector2.ZERO, 22.0, 0.0, TAU, 28, Color(1.0, 0.62, 0.25, 0.5 * blocker_flash), 3.0, true)

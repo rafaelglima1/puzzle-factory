@@ -109,4 +109,20 @@ func _draw() -> void:
 	if not playing and progress <= 0.0:
 		return
 	var alpha := (1.0 - progress) * 0.55
-	draw_rect(Rect2(Vector2(-400.0, -400.0), Vector2(800.0, 800.0)), Color(0.55, 0.06, 0.10, alpha))
+	# Board tint (bounded overlay, fades out).
+	draw_rect(
+		Rect2(Vector2(-500.0, -700.0), Vector2(1000.0, 1400.0)),
+		Color(0.55, 0.06, 0.10, alpha)
+	)
+	# Staging warning band along the bottom edge.
+	draw_rect(
+		Rect2(Vector2(-500.0, 520.0), Vector2(1000.0, 60.0)),
+		Color(0.95, 0.63, 0.13, (1.0 - progress) * 0.5)
+	)
+	# Short impact bars for a brief "thud".
+	for i in 3:
+		var offset := float(i) * 26.0
+		draw_rect(
+			Rect2(Vector2(-260.0 + offset, -60.0), Vector2(14.0, 120.0)),
+			Color(1.0, 0.85, 0.60, alpha * 0.5)
+		)

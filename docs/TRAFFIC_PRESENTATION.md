@@ -293,3 +293,83 @@ win/final/fail results, debug selector zero-based + gating, responsive).
 Not implemented in M3 (M4+): production juice, new audio/haptics systems,
 settings persistence, transitions framework, final particles, coins, boosters,
 ads, IAP, daily rewards, analytics, store SDKs.
+
+## 16. M4 UX / juice (AGENT-2)
+
+M4 makes the same M3 flow feel responsive and coherent. Everything stays
+cosmetic and deterministic: presentation may interpolate authoritative A → B,
+never invent B, and never touches simulation state.
+
+**Tap acknowledgement.** `TrafficPresenter.acknowledge_tap(id)` shows an
+immediate bounded highlight (selection ring, ~0.1 s) plus a tap sound and a
+light haptic, before the logical result is known. It does not imply legality;
+the simulation still decides, and blocked/rejected feedback follows.
+
+**Movement.** `movement_tween_controller` now applies an ease-out curve
+(`1 - (1-t)^3`) for a fast response and soft arrival. Duration stays bounded by
+`MAX_DURATION = 0.6 s`; the entity always settles exactly on the authoritative
+target (`t=1 → 1.0`) and the movement lock is released on arrival.
+
+**Blocked / rejected.** Blocked = axis-aware shake (≤250 ms) + the blocked
+entity and its blockers briefly outlined + warning haptic + blocked SFX.
+Generic `command_rejected` is softer and distinct (short 0.12 s nudge, lower
+sound, no haptic); raw status/code remain debug-only. Staging `full` keeps its
+pressure pulse and is not a per-tap error flash.
+
+**Staging pressure.** `staging_view` pulses the slots (bounded ~0.35 s) when the
+supplied pressure becomes `warning`/`full`; it never recomputes capacity.
+
+**Match / loading.** The procedural match burst is unchanged in spirit, now with
+a short scale pulse on the target view. Effect nodes are capped
+(`MAX_ACTIVE_MATCH_EFFECTS = 6`, `MAX_ACTIVE_BLOCKED_INDICATORS = 4`) so event
+spam cannot churn nodes without bound.
+
+**Objective.** Completing an objective flashes the HUD chips and plays a soft
+success accent; no large interruption.
+
+**Completion / failure.** `completion_effect` gained a board glow, two rings and
+16 fixed confetti dots (≤2 s, skippable after 0.3 s). `failure_effect` gained a
+staging warning band and brief impact bars (≤1.5 s, skippable). Both are bounded
+procedural draws, not emitters.
+
+**Result sequencing (key M4 fix).** Previously the M3 result overlay could cover
+the board in the same frame the win/fail sequence started, hiding it. Now the
+shell records a **pending** result and keeps gameplay visible while
+`TrafficPresenter.active_sequence()` is active; it reveals the result on the
+presenter's `sequence_finished` (skip or natural end), with a bounded fallback
+timeout (`RESULT_REVEAL_TIMEOUT = 2.5 s`). The simulation is already complete
+throughout; the delay is cosmetic only and never affects persistence.
+
+**Result input guard.** The device-derived `ResultScreen.INPUT_GUARD_MS = 350`
+is preserved unchanged and covered by an M4 regression check.
+
+**Transitions.** State changes fade the incoming screen in over a bounded 0.18 s
+(`TRANSITION_DURATION`); navigation intents are emitted exactly once and the
+animation never creates duplicate callbacks.
+
+**Audio (real runtime).** `presentation_audio.gd` now plays through a bounded
+pool of 8 `AudioStreamPlayer`s hosted in the presenter's `AudioHost`. Streams are
+**generated in code** (`procedural_sfx.gd`) for all ten required SFX classes —
+original short tones/clicks, no binary assets. Routing uses
+`AudioContract.bus_for()`, and a missing bus (isolated branch/tests) falls back
+to `Master`. Headless hosts stay silent but count requests; Sound OFF is a safe
+no-op; unknown SFX or missing stream returns false. Music support exists as a
+gate (`set_music_enabled`) without shipping a placeholder loop.
+
+**Haptics.** `light / warning / success` with a 150 ms cooldown; a strictly
+higher-priority pattern may upgrade within the cooldown (blocked WARNING right
+after a tap LIGHT still fires). Disable via `set_enabled(false)` /
+`set_haptics_enabled(false)`; no puzzle dependency.
+
+**Settings UI.** `m3/settings_screen.gd` exposes Music/Sound/Haptics toggles with
+signals `music_enabled_changed` / `sound_enabled_changed` /
+`haptics_enabled_changed` and `apply_presentation_settings(music, sound,
+haptics)`. Applying settings updates the runtime services and the controls
+immediately; **persistence is integration-owned** and wired in the M4
+cross-integration pass.
+
+**Tests:** `game/tests/m4_presentation_juice_test.gd` covers procedural audio,
+runtime playback/pool/bus fallback, sound/haptics gates, tap acknowledgement,
+eased movement + authoritative settlement, blocked/rejected, match/loading pulse,
+objective feedback, completion/fail sequencing, the 350 ms result guard,
+settings UI intents + apply, bounded transitions, and effect caps.

@@ -20,9 +20,11 @@ const MainMenuScreenScript := preload("res://themes/traffic/m3/main_menu_screen.
 const GameplayScreenScript := preload("res://themes/traffic/m3/gameplay_screen.gd")
 const ResultScreenScript := preload("res://themes/traffic/m3/result_screen.gd")
 const DebugLevelSelectScript := preload("res://themes/traffic/m3/debug_level_select_screen.gd")
+const SettingsScreenScript := preload("res://themes/traffic/m3/settings_screen.gd")
 const PresenterScript := preload("res://themes/traffic/traffic_presenter.gd")
+const AudioContractScript := preload("res://audio/audio_contract.gd")
 
-enum State { MAIN_MENU, PLAYING, WIN_RESULT, FAIL_RESULT, DEBUG_LEVEL_SELECT }
+enum State { MAIN_MENU, PLAYING, WIN_RESULT, FAIL_RESULT, DEBUG_LEVEL_SELECT, SETTINGS }
 
 signal play_requested
 signal entity_tapped(entity_id: StringName)
@@ -30,9 +32,19 @@ signal restart_requested
 signal next_requested
 signal menu_requested
 signal debug_level_selected(level_index: int)
+signal settings_requested
+signal music_enabled_changed(value: bool)
+signal sound_enabled_changed(value: bool)
+signal haptics_enabled_changed(value: bool)
 
 ## Debug tooling gate. Production release builds hide the level selector.
 var debug_enabled: bool = OS.is_debug_build()
+
+## Fallback bound for revealing a pending result if the presenter never emits
+## `sequence_finished` (e.g. it was torn down). The simulation is already
+## complete by then; this only bounds the cosmetic delay.
+const RESULT_REVEAL_TIMEOUT := 2.5
+const TRANSITION_DURATION := 0.18
 
 var _state: int = State.MAIN_MENU
 var _level_number := 1
@@ -43,7 +55,25 @@ var _main_menu: MainMenuScreenScript = null
 var _gameplay: GameplayScreenScript = null
 var _result: ResultScreenScript = null
 var _debug_select: DebugLevelSelectScript = null
+var _settings: SettingsScreenScript = null
 var _built := false
+
+## M4 presentation settings (runtime only; persistence is integration-owned).
+var _settings_music := true
+var _settings_sound := true
+var _settings_haptics := true
+
+## Deferred result reveal (M4): the win/fail sequence must be visible before the
+## result overlay covers the board.
+var _pending_result: StringName = &""
+var _pending_is_final := false
+var _pending_fail_key: StringName = &""
+var _pending_timeout := 0.0
+
+## Bounded screen transition (fade-in of the incoming screen).
+var _transition_screen: CanvasItem = null
+var _transition_time := 0.0
+var _transition_active := false
 
 
 func _ready() -> void:
@@ -82,8 +112,13 @@ func build() -> void:
 	_debug_select.name = "DebugLevelSelect"
 	add_child(_debug_select)
 
+	_settings = SettingsScreenScript.new()
+	_settings.name = "Settings"
+	add_child(_settings)
+
 	_main_menu.play_pressed.connect(_on_play_pressed)
 	_main_menu.level_select_pressed.connect(_on_level_select_pressed)
+	_main_menu.settings_pressed.connect(_on_settings_pressed)
 	_gameplay.entity_tapped.connect(_on_entity_tapped)
 	_gameplay.restart_pressed.connect(_on_restart_pressed)
 	_gameplay.menu_pressed.connect(_on_menu_pressed)
@@ -92,6 +127,16 @@ func build() -> void:
 	_result.menu_pressed.connect(_on_menu_pressed)
 	_debug_select.level_selected.connect(_on_debug_level_selected)
 	_debug_select.close_pressed.connect(_on_debug_close_pressed)
+	_settings.music_toggled.connect(_on_settings_music_toggled)
+	_settings.sound_toggled.connect(_on_settings_sound_toggled)
+	_settings.haptics_toggled.connect(_on_settings_haptics_toggled)
+	_settings.closed.connect(_on_settings_closed)
+
+	# Reveal a deferred result when the presenter's win/fail sequence finishes.
+	var presenter := _gameplay.get_presenter()
+	if presenter != null and not presenter.sequence_finished.is_connected(_on_presenter_sequence_finished):
+		presenter.sequence_finished.connect(_on_presenter_sequence_finished)
+	_settings.set_state(_settings_music, _settings_sound, _settings_haptics)
 
 	_apply_state()
 
@@ -100,6 +145,7 @@ func build() -> void:
 
 func show_main_menu() -> void:
 	_ensure_built()
+	_clear_pending_result()
 	_state = State.MAIN_MENU
 	_main_menu.set_debug_visible(debug_enabled)
 	_apply_state()
@@ -107,6 +153,7 @@ func show_main_menu() -> void:
 
 func show_playing(level_number: int, total_levels: int) -> void:
 	_ensure_built()
+	_clear_pending_result()
 	_level_number = maxi(level_number, 1)
 	_total_levels = maxi(total_levels, 1)
 	_gameplay.set_level_text(Strings.format_text(&"ui.level_n", [_level_number]))
@@ -114,21 +161,65 @@ func show_playing(level_number: int, total_levels: int) -> void:
 	_apply_state()
 
 
+## M4: the result overlay is revealed only after the presenter's win/fail
+## sequence is visible (or immediately when no sequence is active). The
+## simulation already completed; this is purely cosmetic sequencing.
 func show_win_result(level_number: int, is_final_level: bool) -> void:
 	_ensure_built()
 	_level_number = maxi(level_number, 1)
-	_result.show_win(_level_number, is_final_level, _total_levels)
-	_state = State.WIN_RESULT
-	_apply_state()
+	if _presenter_sequence_active():
+		_pending_result = &"win"
+		_pending_is_final = is_final_level
+		_pending_timeout = RESULT_REVEAL_TIMEOUT
+		return
+	_reveal_win_result(is_final_level)
 
 
 func show_fail_result(level_number: int, fail_reason: StringName) -> void:
 	_ensure_built()
 	_level_number = maxi(level_number, 1)
 	var key: StringName = _gameplay.get_presenter().fail_reason_localization_key(StringName(fail_reason))
-	_result.show_fail(_level_number, key, _total_levels)
+	if _presenter_sequence_active():
+		_pending_result = &"fail"
+		_pending_fail_key = key
+		_pending_timeout = RESULT_REVEAL_TIMEOUT
+		return
+	_reveal_fail_result(key)
+
+
+func show_settings() -> void:
+	_ensure_built()
+	_clear_pending_result()
+	_state = State.SETTINGS
+	_settings.set_state(_settings_music, _settings_sound, _settings_haptics)
+	_apply_state()
+
+
+func _reveal_win_result(is_final_level: bool) -> void:
+	_result.show_win(_level_number, is_final_level, _total_levels)
+	_state = State.WIN_RESULT
+	_apply_state()
+
+
+func _reveal_fail_result(fail_message_key: StringName) -> void:
+	_result.show_fail(_level_number, fail_message_key, _total_levels)
 	_state = State.FAIL_RESULT
 	_apply_state()
+
+
+func _reveal_pending_result() -> void:
+	var kind := _pending_result
+	_pending_result = &""
+	_pending_timeout = 0.0
+	if kind == &"win":
+		_reveal_win_result(_pending_is_final)
+	elif kind == &"fail":
+		_reveal_fail_result(_pending_fail_key)
+
+
+func _clear_pending_result() -> void:
+	_pending_result = &""
+	_pending_timeout = 0.0
 
 
 func show_debug_level_select(level_entries: Array = []) -> bool:
@@ -138,9 +229,20 @@ func show_debug_level_select(level_entries: Array = []) -> bool:
 	var entries := level_entries if not level_entries.is_empty() else default_debug_entries()
 	if not _debug_select.show_entries(entries):
 		return false
+	_clear_pending_result()
 	_state = State.DEBUG_LEVEL_SELECT
 	_apply_state()
 	return true
+
+
+func get_settings_screen() -> SettingsScreenScript:
+	_ensure_built()
+	return _settings
+
+
+func press_settings() -> void:
+	_ensure_built()
+	_on_settings_pressed()
 
 
 func set_progress(level_number: int, total_levels: int) -> void:
@@ -227,6 +329,8 @@ func state_name() -> StringName:
 			return &"FAIL_RESULT"
 		State.DEBUG_LEVEL_SELECT:
 			return &"DEBUG_LEVEL_SELECT"
+		State.SETTINGS:
+			return &"SETTINGS"
 	return &"UNKNOWN"
 
 
@@ -278,6 +382,53 @@ func main_menu_level_select_visible() -> bool:
 	return _main_menu != null and _main_menu.level_select_visible()
 
 
+func settings_visible() -> bool:
+	return _settings != null and _settings.visible
+
+
+func is_result_pending() -> bool:
+	return _pending_result != &""
+
+
+func pending_result_kind() -> StringName:
+	return _pending_result
+
+
+func transition_active() -> bool:
+	return _transition_active
+
+
+func transition_alpha() -> float:
+	if _transition_screen == null or not is_instance_valid(_transition_screen):
+		return 1.0
+	return _transition_screen.modulate.a
+
+
+# --- Presentation settings (runtime only; persistence is integration-owned) --
+
+## Applies settings to the runtime services immediately (inbound path); the
+## settings screen controls are updated to match. No intent is emitted here.
+func apply_presentation_settings(music: bool, sound: bool, haptics: bool) -> void:
+	_ensure_built()
+	_settings_music = music
+	_settings_sound = sound
+	_settings_haptics = haptics
+	_settings.set_state(music, sound, haptics)
+	_gameplay.get_presenter().apply_presentation_settings(music, sound, haptics)
+
+
+func music_enabled() -> bool:
+	return _settings_music
+
+
+func sound_enabled() -> bool:
+	return _settings_sound
+
+
+func haptics_enabled() -> bool:
+	return _settings_haptics
+
+
 # --- Layout accessors (responsive validation / integration) -----------------
 
 func board_rect() -> Rect2:
@@ -309,11 +460,72 @@ func layout_for(viewport: Vector2) -> void:
 	_gameplay.layout_for(viewport)
 	_result.layout_for(viewport)
 	_debug_select.layout_for(viewport)
+	_settings.layout_for(viewport)
 
 
 func advance(delta: float) -> void:
 	_ensure_built()
 	_gameplay.advance(delta)
+	_update_pending(delta)
+	_update_transition(delta)
+
+
+func _process(delta: float) -> void:
+	if not _built:
+		return
+	_update_pending(delta)
+	_update_transition(delta)
+
+
+func _update_pending(delta: float) -> void:
+	if _pending_result == &"":
+		return
+	_pending_timeout -= delta
+	if _pending_timeout <= 0.0 or not _presenter_sequence_active():
+		_reveal_pending_result()
+
+
+func _presenter_sequence_active() -> bool:
+	if _gameplay == null:
+		return false
+	var presenter := _gameplay.get_presenter()
+	return presenter != null and presenter.active_sequence() != &""
+
+
+func _on_presenter_sequence_finished(_kind: StringName) -> void:
+	if _pending_result != &"":
+		_reveal_pending_result()
+
+
+func _start_transition(screen: CanvasItem) -> void:
+	if screen == null:
+		return
+	if _transition_screen != null and is_instance_valid(_transition_screen) and _transition_screen != screen:
+		_transition_screen.modulate.a = 1.0
+	_transition_screen = screen
+	_transition_time = 0.0
+	_transition_active = true
+	screen.modulate.a = 0.0
+
+
+func _update_transition(delta: float) -> void:
+	if not _transition_active or _transition_screen == null or not is_instance_valid(_transition_screen):
+		_transition_active = false
+		return
+	_transition_time += delta
+	var alpha := clampf(_transition_time / TRANSITION_DURATION, 0.0, 1.0)
+	_transition_screen.modulate.a = alpha
+	if alpha >= 1.0:
+		_transition_screen.modulate.a = 1.0
+		_transition_active = false
+
+
+func _play_button_sound() -> void:
+	if _gameplay == null:
+		return
+	var presenter := _gameplay.get_presenter()
+	if presenter != null:
+		presenter.audio.play(AudioContractScript.SFX_BUTTON)
 
 
 func teardown() -> void:
@@ -328,6 +540,10 @@ func teardown() -> void:
 	_gameplay = null
 	_result = null
 	_debug_select = null
+	_settings = null
+	_transition_screen = null
+	_transition_active = false
+	_clear_pending_result()
 	_built = false
 
 
@@ -347,14 +563,72 @@ func _apply_state() -> void:
 		_result.visible = _state == State.WIN_RESULT or _state == State.FAIL_RESULT
 	if _debug_select != null:
 		_debug_select.visible = _state == State.DEBUG_LEVEL_SELECT
+	if _settings != null:
+		_settings.visible = _state == State.SETTINGS
+	_start_transition(_screen_for_state())
+
+
+func _screen_for_state() -> CanvasItem:
+	match _state:
+		State.MAIN_MENU:
+			return _main_menu
+		State.PLAYING:
+			return _gameplay
+		State.WIN_RESULT, State.FAIL_RESULT:
+			return _result
+		State.DEBUG_LEVEL_SELECT:
+			return _debug_select
+		State.SETTINGS:
+			return _settings
+	return null
 
 
 func _on_play_pressed() -> void:
+	_play_button_sound()
 	play_requested.emit()
 
 
 func _on_level_select_pressed() -> void:
+	_play_button_sound()
 	show_debug_level_select()
+
+
+func _on_settings_pressed() -> void:
+	_play_button_sound()
+	settings_requested.emit()
+	show_settings()
+
+
+func _on_settings_closed() -> void:
+	_play_button_sound()
+	show_main_menu()
+
+
+func _on_settings_music_toggled(value: bool) -> void:
+	_play_button_sound()
+	_settings_music = value
+	_apply_runtime_settings()
+	music_enabled_changed.emit(value)
+
+
+func _on_settings_sound_toggled(value: bool) -> void:
+	_play_button_sound()
+	_settings_sound = value
+	_apply_runtime_settings()
+	sound_enabled_changed.emit(value)
+
+
+func _on_settings_haptics_toggled(value: bool) -> void:
+	_play_button_sound()
+	_settings_haptics = value
+	_apply_runtime_settings()
+	haptics_enabled_changed.emit(value)
+
+
+func _apply_runtime_settings() -> void:
+	if _gameplay == null:
+		return
+	_gameplay.get_presenter().apply_presentation_settings(_settings_music, _settings_sound, _settings_haptics)
 
 
 func _on_entity_tapped(entity_id: StringName) -> void:
@@ -362,24 +636,34 @@ func _on_entity_tapped(entity_id: StringName) -> void:
 
 
 func _on_restart_pressed() -> void:
+	_play_button_sound()
+	_clear_pending_result()
 	restart_requested.emit()
 
 
 func _on_menu_pressed() -> void:
+	_play_button_sound()
+	_clear_pending_result()
 	menu_requested.emit()
 
 
 func _on_next_pressed() -> void:
+	_play_button_sound()
+	_clear_pending_result()
 	next_requested.emit()
 
 
 func _on_retry_pressed() -> void:
+	_play_button_sound()
+	_clear_pending_result()
 	restart_requested.emit()
 
 
 func _on_debug_level_selected(index: int) -> void:
+	_play_button_sound()
 	debug_level_selected.emit(index)
 
 
 func _on_debug_close_pressed() -> void:
+	_play_button_sound()
 	show_main_menu()
